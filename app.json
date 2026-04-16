@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Volta-app",
-    "slug": "Volta-app",
+    "name": "Volta-frontend",
+    "slug": "Volta-fontend",
     "version": "1.0.0",
     "orientation": "portrait",
     "platforms": [
@@ -37,6 +37,7 @@
       "package": "com.anonymous.Voltaapp"
     },
     "web": {
+      "bundler": "metro",
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
