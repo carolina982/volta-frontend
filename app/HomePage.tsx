@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import { Alert, Image, Modal, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Button, TextInput } from "react-native-paper";
 import { api, BASE_URL } from "../services/api";
-import { User } from "./types";
+import { User } from "../types";
 
 interface Announcement {
   id: string;

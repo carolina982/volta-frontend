@@ -9,7 +9,7 @@ import { ActivityIndicator, Button, TextInput } from "react-native-paper";
 import * as XLSX from "xlsx";
 import { useStore } from "../context/Store";
 import { api, BASE_URL } from "../services/api";
-import { Viatico } from "./types";
+import { Viatico } from "../types";
 
 interface Trip { id: string;nombre: string; conductorId: string; conductorNombre?: string;}
 

@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, View, } from "react-native";
 import { Avatar, Button, TextInput } from "react-native-paper";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { User } from "./types";
+import { User } from "../types";
 
 interface PerfilPageProps {
   currentUser: User | null;

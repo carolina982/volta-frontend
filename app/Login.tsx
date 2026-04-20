@@ -1,4 +1,5 @@
 import { FontAwesome5 } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useState } from "react";
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { TextInput } from "react-native-paper";
@@ -32,13 +33,11 @@ export default function Login({ navigation }: any) {
       );
       return;
     }
-    if (Platform.OS === "web"){
-      localStorage.setItem("token",data.token);
-    }else{
-      const AsyncStorage=(
-        await import("@react-native-async-storage/async-storage")).default;
-        await AsyncStorage.setItem("token",data.token);
-    }
+   if (Platform.OS === "web"){
+    localStorage.setItem("token",data.token);
+   }else{
+    await AsyncStorage.setItem("token",data.token)
+   }
     login(data.user);
     }catch (error){
       console.error("Login error",error);

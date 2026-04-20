@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import { Alert, FlatList, Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Button, TextInput } from "react-native-paper";
 import { api } from "../services/api";
-import { User } from "./types";
+import { User } from "../types";
 
 export default function AdminPage() {
   const [users, setUsers] = useState<User[]>([]);
