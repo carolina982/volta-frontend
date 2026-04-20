@@ -66,8 +66,8 @@ export default function Register({ navigation }: any) {
       let res;
       if (photoUrl) {
         const formData = new FormData();
-        formData.append("name", nombre+" "+apellido);
-        //formData.append("apellido", apellido);
+        formData.append("name", nombre);
+        formData.append("apellido", apellido);
         formData.append("email", email.toLowerCase());
         formData.append("password", password);
         formData.append("rol", rol);
@@ -89,7 +89,7 @@ export default function Register({ navigation }: any) {
           });
         }
       } else {
-        const newUser ={name:nombre+" "+apellido, email:email.toLocaleLowerCase(),password,role:rol}
+        const newUser={nombre,apellido,email:email.toLocaleLowerCase(),password,rol};
         res = await api.post("/users/register", newUser);
       }
 
