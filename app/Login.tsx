@@ -1,5 +1,6 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { TextInput } from "react-native-paper";
@@ -11,6 +12,7 @@ export default function Login({ navigation }: any) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const router =useRouter();
  
   const handledLogin = async ()=>{
     if (!email || !password){
@@ -26,11 +28,14 @@ export default function Login({ navigation }: any) {
         body:JSON.stringify({email:email.trim().toLowerCase(),password,}),
       }
     );
-    const data =await response.json();
+    let data;
+    try{
+      data=await response.json();
+    }catch{
+      data={};
+    }
     if (!response.ok){
-      Alert.alert(
-        "Error", data.message || "Ocurrio un problema al iniciar sesion"
-      );
+      Alert.alert("Error", data.message || "Ocurrio un problema al iniciar sesion");
       return;
     }
    if (Platform.OS === "web"){
@@ -38,6 +43,10 @@ export default function Login({ navigation }: any) {
    }else{
     await AsyncStorage.setItem("token",data.token)
    }
+    if (!data || !data.user){
+      Alert.alert("Error","Respuesta inalidad del servidor");
+      return;
+    }
     login(data.user);
     }catch (error){
       console.error("Login error",error);
@@ -61,14 +70,14 @@ export default function Login({ navigation }: any) {
               {loading ? "Iniciando sesión..." : "Iniciar Sesión"}
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate("ForgotPassword")}><Text style={{ color: "#007bff", marginTop: 10 }}>
+          <TouchableOpacity onPress={() => router.push("/ForgotPassword")}><Text style={{ color: "#007bff", marginTop: 10 }}>
               ¿Olvidaste tu contraseña?
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.registerButton}
-            onPress={() => navigation.navigate("Register")}
+            onPress={() => router.push("/Register")}
           >
             <Text style={styles.registerText}>
               ¿No tienes cuenta? Regístrate
