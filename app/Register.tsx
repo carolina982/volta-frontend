@@ -66,8 +66,8 @@ export default function Register({ navigation }: any) {
       let res;
       if (photoUrl) {
         const formData = new FormData();
-        formData.append("nombre", nombre);
-        formData.append("apellido", apellido);
+        formData.append("name", nombre+" "+apellido);
+        //formData.append("apellido", apellido);
         formData.append("email", email.toLowerCase());
         formData.append("password", password);
         formData.append("rol", rol);
@@ -81,7 +81,7 @@ export default function Register({ navigation }: any) {
           const uriParts = photoUrl.split(".");
           const fileType = uriParts[uriParts.length - 1];
           formData.append(
-            "imagenUrl",
+            "image",
             { uri: photoUrl, name: `imagen.${fileType}`, type: `image/${fileType}` } as any
           );
           res = await api.post("/users/register", formData, {
@@ -89,7 +89,7 @@ export default function Register({ navigation }: any) {
           });
         }
       } else {
-        const newUser = { nombre, apellido, email: email.toLowerCase(), password, rol, photoUrl: null };
+        const newUser ={name:nombre+" "+apellido, email:email.toLocaleLowerCase(),password,role:rol}
         res = await api.post("/users/register", newUser);
       }
 
