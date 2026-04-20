@@ -6,7 +6,7 @@ import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, To
 import { TextInput } from "react-native-paper";
 import { useStore } from "../context/Store";
 
-export default function Login({ navigation }: any) {
+export default function Login() {
   const { login } = useStore();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
