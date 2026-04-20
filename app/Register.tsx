@@ -96,7 +96,7 @@ export default function Register({ navigation }: any) {
       if (res.status === 200 || res.status === 201) {
         Alert.alert("Éxito", "Usuario registrado correctamente");
         addUser(res.data);
-        navigation.navigate("Login");
+        navigation.replace("/Login");
       } else {
         Alert.alert("Error", "No se pudo registrar el usuario");
       }
