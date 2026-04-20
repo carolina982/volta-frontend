@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { createContext, ReactNode, useContext, useEffect, useState } from "react";
 import { Platform } from "react-native";
-import { Trip, Unit, User, Viatico } from "../app/types";
+import { Trip, Unit, User, Viatico } from "../types";
 
 
 // ================== PARCHE DE PORTABILIDAD (ARREGLA EL ERROR ROJO) ==================

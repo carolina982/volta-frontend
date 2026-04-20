@@ -1,7 +1,10 @@
+import { StoreProvider } from "@/context/Store";
 import { Stack } from "expo-router";
-export  default function Layout (){
-   return (
-    <Stack screenOptions={{headerShown:false,}}
-    />
-   );
+
+export default function layout (){
+    return (
+        <StoreProvider>
+            <Stack screenOptions={{headerShown:false}}/>
+        </StoreProvider>
+    );
 }
