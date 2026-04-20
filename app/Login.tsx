@@ -47,7 +47,8 @@ export default function Login() {
       Alert.alert("Error","Respuesta inalidad del servidor");
       return;
     }
-    login(data.user);
+    login(data.user || {email});
+    
     }catch (error){
       console.error("Login error",error);
       Alert.alert("Error","No se pudo iniciar sesion .Intenta mas tarder");
