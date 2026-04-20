@@ -48,7 +48,7 @@ export default function Login() {
       return;
     }
     login(data.user );
-    router.replace("/HomePage");
+    router.replace("/Dashboard");
     console .log("Respuesta login",data)
     }catch (error){
       console.error("Login error",error);
