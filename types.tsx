@@ -4,6 +4,7 @@ export interface User {
     id:string;
     nombre:string;
     apellido:string;
+    contacto:string;
     email:string ;
     password?:string ;
     rol :"Admin" |"Chofer";
@@ -49,3 +50,4 @@ export interface Trip{
     viaticos:string [];
     estado :"pendiente" |"en curso "| "finalizado";
 }
+

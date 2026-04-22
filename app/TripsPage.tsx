@@ -15,14 +15,15 @@ interface Trip {
   tripId: unknown;
   conductorNombre: any;
   id: string; 
-  nombre: string;
+  rutaAcubrir: string;
   unidadId: string; 
   conductorId: string |{_id:string};
   fechaSalida: string; 
   fechaLlegada: string;
   destino: string;  
   estado: string;
-  kilometraje?: number; 
+  kilometrajeSalida?: number; 
+  kilometrajeLlegada?:number;
   acompanante:string;
   def:string;
 }
@@ -32,20 +33,21 @@ interface User { id: string; nombre: string; apellido?: string; }
 
 export default function TripsPage() {
   const { currentUser } = useStore();
-  console.log("current user",currentUser);
+  //console.log("current user",currentUser);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
-  const [nombre, setNombre] = useState("");
+  const [rutaAcubrir, setRutaAcubrir] = useState("");
   const [unidadId, setUnidadId] = useState("");
   const [conductorId, setConductorId] = useState("");
   const [fechaSalida, setFechaSalida] = useState("");
   const [fechaLlegada, setFechaLlegada] = useState("");
   const [destino, setDestino] = useState("");
   const [estado, setEstado] = useState("pendiente");
-  const [kilometraje, setKilometraje] = useState("");
+  const [kilometrajeSalida, setKilometrajeSalida] = useState("");
+  const [kilometrajeLlegada, setKilometrajeLlegada] = useState("");
   const [acompanante,setAcompanante]=useState("");
   const [def,setDef]=useState("");
   const [exportType , setExportType]=useState("");
@@ -150,7 +152,7 @@ export default function TripsPage() {
   const openModal = (trip?: Trip) => {
     if (trip) {
       setEditingTrip(trip);
-      setNombre(trip.nombre);
+      setRutaAcubrir(trip.rutaAcubrir);
       setUnidadId(trip.unidadId);
       const conductorId =typeof trip.conductorId === "object"? trip.conductorId._id : trip.conductorId;
       setConductorId(conductorId);
@@ -158,19 +160,20 @@ export default function TripsPage() {
       setFechaLlegada(trip.fechaLlegada? new Date(trip.fechaLlegada).toLocaleDateString("es-ES"): "");
       setDestino(trip.destino);
       setEstado(trip.estado);
-      setKilometraje(trip.kilometraje?.toString() || "");
+      setKilometrajeSalida(trip.kilometrajeSalida?.toString() || "");
+      setKilometrajeLlegada(trip.kilometrajeLlegada?.toString() || "");
       setAcompanante(trip.acompanante)
       setDef(trip.def || "");
       } else {
       setEditingTrip(null);
-      setNombre("");  
+      setRutaAcubrir("");  
       setUnidadId(""); 
       setConductorId("");  
       setFechaSalida("");
       setFechaLlegada("");  
       setDestino(""); 
       setEstado("pendiente");   
-      setKilometraje("");
+      setKilometrajeSalida("");
       setAcompanante("");
       setDef("");
     }
@@ -185,13 +188,13 @@ export default function TripsPage() {
   const estadoCalculado = fechaLlegada && fechaLlegada.trim() !== "" ? "completado" : "pendiente";
 
   if (isAdmin) {
-    if (!nombre || !unidadId || !conductorId || !fechaSalida) {
+    if (!rutaAcubrir|| !unidadId || !conductorId || !fechaSalida) {
       Alert.alert("Falta información", "Nombre, unidad, conductor y fecha de salida son obligatorios.");
       return;
     }
   }
   const payload: any = {
-    nombre,
+    rutaAcubrir:rutaAcubrir,
     unidadId,
     conductorId,
     destino,
@@ -204,8 +207,11 @@ export default function TripsPage() {
   if (fechaLlegada && fechaLlegada.trim() !== "") {
     payload.fechaLlegada = parseDate(fechaLlegada);
   }
-  if (kilometraje && kilometraje.trim() !== "") {
-    payload.kilometraje = Number(kilometraje);
+  if (kilometrajeSalida && kilometrajeSalida.trim() !== "") {
+    payload.kilometrajeSalida = Number(kilometrajeSalida);
+  }
+  if (kilometrajeLlegada && kilometrajeLlegada.trim() !== "") {
+    payload.kilometrajeLlegada=Number(kilometrajeLlegada);
   }
   // llama a atraer el tipo de remolque 
   if(mostrarRemolque){
@@ -311,7 +317,8 @@ export default function TripsPage() {
           "Día",
           "Conductor",
           "Acompañante",
-          "Kilometraje",
+          "KilometrajeSalida",
+          "KilometrajeLlegada",
           "Estado",
         ]);
 
@@ -346,14 +353,15 @@ export default function TripsPage() {
 
       ws_data.push([
         weekNumber,
-        t.nombre ?? "N/A",
+        t.rutaAcubrir ?? "N/A",
         t.destino ?? "N/A",
         salida.toLocaleDateString("es-ES"),
         llegada.toLocaleDateString("es-ES"),
         dayNumber,
         users.find((u) => u.id === t.conductorId)?.nombre ?? "N/A",
         t.acompanante ?? "N/A",
-        Number(t.kilometraje ?? 0),
+        Number(t.kilometrajeSalida ?? 0),
+        Number(t.kilometrajeLlegada ?? 0),
         t.estado ?? "N/A",
       ]);
 
@@ -417,7 +425,7 @@ export default function TripsPage() {
     const canDelete = isAdmin;
     return (
       <View style={styles.card}>
-        <Text style={styles.title}>{item.nombre}</Text>
+        <Text style={styles.title}>{item.rutaAcubrir}</Text>
         <Text style={styles.textSmall}>Unidad:{unidadNombre} {unitPlaca}</Text>
         <Text style={styles.textSmall}>Conductor:{conductorNombre}</Text>
         <Text style={styles.textSmall}>Acompañante:{AcompananteNombre}</Text>
@@ -426,7 +434,8 @@ export default function TripsPage() {
         <Text style={styles.textSmall}>Llegada:{new Date(item.fechaLlegada).toLocaleDateString()}</Text>
         <Text style={styles.textSmall}>Estado: {item.estado}</Text>
         <Text style={styles.textSmall}>Def:{item.def}</Text>
-        <Text style={styles.textSmall}>Kilometraje: {item.kilometraje ?? 0} km</Text>
+        <Text style={styles.textSmall}>KilometrajeSalida: {item.kilometrajeSalida ?? 0} km</Text>
+        <Text style={styles.textSmall}>KilometrajeLlegada: {item.kilometrajeLlegada ?? 0} km</Text>
         <View style={{ flexDirection: "row", marginTop: 5, gap: 10 }}>
           {canEdit && <Button mode="contained" buttonColor="#008bff" textColor="rgb(243, 246, 248)"onPress={() => openModal(item)}>Editar</Button>}
           {canDelete && <Button mode="contained" buttonColor="red"textColor="rgb(243, 246, 248)" onPress={() => deleteTrip(item.id)}>Eliminar</Button>}
@@ -461,8 +470,8 @@ export default function TripsPage() {
       <Text style={styles.modalTitle}> {editingTrip ? "Editar Viaje" : "Nuevo Viaje"}</Text>
       {isAdmin ? (
         <>
-         <Text style={styles.label}>Nombre:</Text>
-         <TextInput value={nombre} onChangeText={setNombre} mode="flat" underlineColor="#8bc1e6ff" activeUnderlineColor="#8bc1e6ff" dense textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} />
+         <Text style={styles.label}>Ruta a cubrir:</Text>
+         <TextInput value={rutaAcubrir} onChangeText={setRutaAcubrir} mode="flat" underlineColor="#8bc1e6ff" activeUnderlineColor="#8bc1e6ff" dense textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} />
          <Text style={styles.label}>Unidad:</Text>
          <Picker selectedValue={unidadId} onValueChange={(value)=>{ setUnidadId(value);
          const unidad = units.find((u)=>u.nombre === value) || null;
@@ -481,7 +490,7 @@ export default function TripsPage() {
           <Picker.Item label="Seleccionar unidad" value=""/>
           {units.map((u)=>(
             <Picker.Item
-            key={u.id}label={`${u.nombre} ${u.placa}`}value={u.nombre}
+            key={u.id}label={`${u.nombre} ${u.placa}`}value={u.id}
             />
              ))}
              </Picker>
@@ -509,12 +518,20 @@ export default function TripsPage() {
           <Picker.Item label="Sin acompañante" value="none" />
           {users.map(u => <Picker.Item key={u.id} label={u.nombre} value={u.id} />)}
         </Picker>
-        <Text style={styles.label}>Def</Text>
+        <Text style={styles.label}>Def entregado </Text>
          <TextInput value={def} onChangeText={setDef} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} />
         <Text style={styles.label}>Destino:</Text>
          <TextInput value={destino} onChangeText={setDestino} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense  textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input} />
-        <Text style={styles.label}>Kilometraje km:</Text>
-         <TextInput value={kilometraje} onChangeText={setKilometraje} keyboardType="numeric" mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense  textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input} />
+        <View style={styles.row}>
+          <View style={styles.field}>
+            <Text style={styles.label}>Kilometraje salida km</Text>
+            <TextInput value={kilometrajeSalida}onChangeText={setKilometrajeSalida}keyboardType="numeric"mode="flat"underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"dense textColor="#000"contentStyle={{color:"#000",fontWeight:"600"}}style={styles.input}/>
+          </View>
+          <View style={styles.field}>
+            <Text style={styles.label}>Kilometraje llegada km</Text>
+            <TextInput value={kilometrajeLlegada}onChangeText={setKilometrajeLlegada}keyboardType="numeric"mode="flat"underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"dense textColor="#000"contentStyle={{color:"#000",fontWeight:"600"}}style={styles.input}/>
+          </View>
+        </View>
         <Text style={styles.label}>Fecha de Salida:</Text>
         {Platform.OS === "web" ?(
           <input type="date" onChange={(e)=>{
@@ -548,9 +565,40 @@ export default function TripsPage() {
           )}
           </>
         )}
-        
-        <Text style={styles.label}>Fecha de Llegada:</Text>
-         <TextInput value={fechaLlegada} onChangeText={setFechaLlegada} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input} />
+         <Text style={styles.label}>Fecha de Llegada:</Text>
+        {Platform.OS === "web" ?(
+          <input type="date" onChange={(e)=>{
+            const date=new Date(e.target.value);
+            const f= 
+                    ("0" + date.getDate()).slice(-2) +"/" +
+                    ("0" + (date.getMonth () +1)).slice (-2) +"/"+
+                    date.getFullYear();
+
+                    setFechaSalida(f);
+          }}
+          style={{padding:10,borderRadius:5,marginBottom:10}}/>
+        ):(
+          <>
+          <TouchableOpacity onPress={()=>setShowLlegadaPicker(true)}>
+            <TextInput value="fechaLlegada" placeholder="Seleccionar fecha" editable={false} style={styles.input}/>
+          </TouchableOpacity>
+          { setShowSalidaPicker && (
+            <DateTimePicker value={new Date()} mode="date" display="default" onChange={(event,date)=>{
+              setShowSalidaPicker(false);
+              if (date){
+                const f =
+                  ("0" + date.getDate()).slice(-2)+ "/"+
+                  ("0" +(date.getMonth()+1)).slice(-2)+"/"+
+                  date.getFullYear();
+
+                  setFechaLlegada(f);
+              }
+            }}
+            />
+          )}
+          </>
+        )}
+
         </>
         ) : (
         <>
@@ -606,4 +654,6 @@ const styles = StyleSheet.create({
   input:{borderRadius: 5, padding: 8, marginBottom: 10, backgroundColor: "#fff" },
   label:{fontWeight: "bold", marginBottom: 5 },
   picker:{backgroundColor: "#fff", borderRadius: 5, marginBottom: 10 },
+  row:{flexDirection:"row" ,justifyContent:"space-between",gap:15},
+  field:{flex:1}
 });

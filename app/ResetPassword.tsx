@@ -30,7 +30,7 @@ export default function ResetPassword({ route, navigation }: any) {
 
     try {
       const response = await fetch(
-        "http://192.168.1.81:3000/api/auth/reset-password",
+        "https://volta-backend-drkt.onrender.com/api/auth/reset-password",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

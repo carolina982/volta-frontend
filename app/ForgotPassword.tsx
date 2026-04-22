@@ -12,7 +12,7 @@ export default function ForgotPassword({ navigation }: any) {
     }
     setLoading (true);
     try {
-      const res=await fetch ("https://volta-backend-drkt.onrender.com/api/auth/forgot-passwprd",{
+      const res=await fetch ("https://volta-backend-m25k.onrender.com/api/auth/forgot-passwprd",{
         method:"POST",
         headers:{"Content-Type":"application /json",},
         body:JSON.stringify({email:email.trim().toLowerCase()}),

@@ -1,3 +1,5 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View, } from "react-native";
 import { Appbar } from "react-native-paper";
@@ -18,6 +20,7 @@ export default function Dashboard() {
   const [tab, setTab] = useState<TabType>("Inicio");
   const [menuVisible, setMenuVisible] = useState(false);
   const { width } = useWindowDimensions();
+  const router=useRouter();
 
   const isLargeScreen = width >= 1024;
 
@@ -29,8 +32,11 @@ export default function Dashboard() {
     );
   }
 
-  const handleLogout = () => setCurrentUser(null);
-
+  const handleLogout=async ()=>{
+    await AsyncStorage.removeItem("token");
+    setCurrentUser(null);
+    router.replace("/Login")
+  };
   const renderContent = () => {
     switch (tab) {
       case "Inicio":

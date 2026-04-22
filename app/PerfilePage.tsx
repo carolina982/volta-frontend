@@ -1,6 +1,6 @@
 import { Picker } from "@react-native-picker/picker";
 import * as ImagePicker from "expo-image-picker";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, View, } from "react-native";
 import { Avatar, Button, TextInput } from "react-native-paper";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -28,12 +28,25 @@ export default function PerfilPage({
   const [apellido, setApellido] = useState(currentUser.apellido);
   const [rol, setRol] = useState<"Admin" | "Chofer">(currentUser.rol);
   const [email, setEmail] = useState(currentUser.email);
+  const [contacto ,setContacto]=useState(currentUser.contacto);
+  useEffect (()=> {
+    if (currentUser){
+      setContacto(currentUser.contacto || "");
+      setNombre(currentUser.nombre || "");
+      setApellido(currentUser.apellido || "");
+      setEmail(currentUser.email || "");
+      setRol(currentUser.rol || "Chofer");
+    }
+  },[currentUser]);
+ 
   const [photoUri, setPhotoUri] = useState<string | null>(
     currentUser.photoUrl
-      ? `https://volta-backend-drkt.onrender.com${currentUser.photoUrl}`
+      ? `https://volta-backend-m25k.onrender.com${currentUser.photoUrl}`
       : null
   );
   const [isSaving, setIsSaving] = useState(false);
+  
+
 
  const handleSave = async () => {
   setIsSaving(true);
@@ -45,8 +58,9 @@ export default function PerfilPage({
     formData.append("apellido", apellido);
     formData.append("email", email);
     formData.append("rol", rol);
+    formData.append("contacto",contacto);
 
-    if (photoUri && photoUri.startsWith("file")) {
+    if (photoUri && photoUri.startsWith("file://")) {
       formData.append("photo", {
         uri: photoUri,
         name: "profile.jpg",
@@ -54,20 +68,15 @@ export default function PerfilPage({
       } as any);
     }
 
-    const res = await fetch(
-      "https://volta-backend-drkt.onrender.com/api/users/profile",
-      {
-        method: "PUT",
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-        body: formData,
-      }
+    console.log("id",currentUser._id);
+    const res=await fetch(`https://volta-backend-m25k.onrender.com/api/users/${currentUser._id}`,{
+      method:"PATCH",
+      body:formData,
+    }
     );
-
     const data = await res.json();
 
-    // actualizar usuario en app
+   // actualizar usuario en app
     if (setCurrentUser) {
       setCurrentUser(data);
     }
@@ -119,7 +128,7 @@ export default function PerfilPage({
           />
         )}
 
-        <Button mode="outlined"style={styles.changePhotoButton}onPress={(pickerImage) => {}}labelStyle={{ color: "#0d75bb" }}>
+        <Button mode="outlined"style={styles.changePhotoButton}onPress={pickerImage }labelStyle={{ color: "#0d75bb" }}>
           Cambiar Imagen
         </Button>
 
@@ -127,6 +136,7 @@ export default function PerfilPage({
         <TextInput label="Nombre"value={nombre}onChangeText={setNombre}mode="flat"underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}/>
         <TextInput label="Apellido"value={apellido}onChangeText={setApellido}mode="flat"underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input}/>
         <TextInput label="Email"value={email}onChangeText={setEmail}mode="flat"underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}/>
+        <TextInput label="Contacto"value={contacto}onChangeText={setContacto}mode="flat"underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}/>
         <Text style={styles.rolLabel}>Rol</Text>
         <Picker selectedValue={rol}onValueChange={(value: "Admin" | "Chofer") => setRol(value)}style={styles.picker} mode={Platform.OS === "ios"?"dropdown":"dropdown"}>
           <Picker.Item label="Admin" value="Admin" />
