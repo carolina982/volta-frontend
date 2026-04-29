@@ -53,8 +53,8 @@ export default function ViaticsPage() {
   const [dieselCosto,setDieselCosto]=useState("");
   const [totalSDieselGlobal,setTotalDieselGlobal]=useState(0);
   const [viaticoSeleccionado,setViaticoSeleccionado]=useState<any>(null);
-  
-
+  const [casetaFoto,setCasetaFoto]=useState<string | null>(null);
+  const [casetaFotoRemoved,setCasetaFotoRemoved]=useState(false);
 
   interface CargaDiesel{
     cantidad:string;
@@ -384,6 +384,22 @@ const openModal =(viatico?:Viatico)=>{
     }
   };
 
+  const pickCasetaFoto= async ()=>{
+    try{
+      const result=await DocumentPicker.getDocumentAsync({
+        type:["image/*"],
+        copyToCacheDirectory:true
+      });
+      if (result.canceled) return;
+
+      const file=result.assets[0];
+      setCasetaFoto(file.uri);
+      setCasetaFotoRemoved(false);
+    }catch (e){
+      console.error(e);
+      Alert.alert("Error","No se pudo seleccionar la imagen ");
+    }
+  };
   const normalizarViaticoParaEditar =(viatico:any,conceptosBase:string [])=>{
     const conceptosPlano:any={};
     conceptosBase.forEach(base =>{
@@ -574,9 +590,25 @@ const openModal =(viatico?:Viatico)=>{
                 <TextInput value={conceptos[`${base} Costo`]}
                    onChangeText={(t)=>setConceptos
                     ({...conceptos,[`${base} Costo`]: t})}keyboardType="numeric"mode="flat"underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}placeholder="Costo"/>
+                {base === "Casetas efectivo" && (
+                  <View style={{marginBottom:10}}>
+                    <Text style={styles.label}>Subir foto :</Text>
+                    {casetaFoto ? (
+                      <>
+                      <Image source={{uri:casetaFoto}} style={styles.facturaPreview}/>
+                      <View style={{flexDirection:"row",gap:10}}>
+                        <Button mode="contained" buttonColor="#0d75bb" onPress={pickCasetaFoto}>Remplazar</Button>
+                        <Button mode="contained" buttonColor="#0d75bb" onPress={()=>{setCasetaFoto(null);setCasetaFotoRemoved(true);}}>Eliminar</Button>
+                      </View>
+                      </>
+                    ):(
+                      <Button mode="contained" buttonColor="#0d75bb" onPress={pickCasetaFoto}>Subir foto </Button>
+                    )}
               </View>
-           ))}
+           )}
           </View>
+              ))}
+              </View>
           <View style={{ flex: 1, paddingLeft: 3 }}>
              {conceptosBase
              .filter((b)=> b !== "Comidas" && (isAdmin || b !=="Comisiones"))

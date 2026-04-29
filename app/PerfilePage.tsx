@@ -41,7 +41,7 @@ export default function PerfilPage({
  
   const [photoUri, setPhotoUri] = useState<string | null>(
     currentUser.photoUrl
-      ? `https://volta-backend-m25k.onrender.com${currentUser.photoUrl}`
+      ? `https://volta-backend-px1a.onrender.com${currentUser.photoUrl}`
       : null
   );
   const [isSaving, setIsSaving] = useState(false);
@@ -69,7 +69,7 @@ export default function PerfilPage({
     }
 
     console.log("id",currentUser._id);
-    const res=await fetch(`https://volta-backend-m25k.onrender.com/api/users/${currentUser._id}`,{
+    const res=await fetch(`https://volta-backend-px1a.onrender.com/api/users/${currentUser._id}`,{
       method:"PATCH",
       body:formData,
     }

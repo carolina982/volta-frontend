@@ -21,7 +21,7 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      const response=await fetch ("https://volta-backend-m25k.onrender.com/api/auth/login",
+      const response=await fetch ("https://volta-backend-px1a.onrender.com/api/auth/login",
         {
         method:"POST",
         headers:{"Content-Type":"application/json"},

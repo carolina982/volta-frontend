@@ -1,7 +1,7 @@
 import * as ImagePicker from "expo-image-picker";
 import React, { useState } from "react";
 import { Alert, Button, Image, StyleSheet, Text, View } from "react-native";
-import { User } from "../app/types";
+import { User } from "../types";
 
 interface ProfileTabProps {
   currentUser: User;

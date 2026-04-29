@@ -534,14 +534,16 @@ export default function TripsPage() {
         </View>
         <Text style={styles.label}>Fecha de Salida:</Text>
         {Platform.OS === "web" ?(
-          <input type="date" onChange={(e)=>{
+          <input type="date" value={fechaSalida 
+          ? new Date(parseDate(fechaSalida)).toISOString().split("T")[0]
+           : ""
+          }
+          onChange={(e)=>{
             const date=new Date(e.target.value);
-            const f= 
-                    ("0" + date.getDate()).slice(-2) +"/" +
-                    ("0" + (date.getMonth () +1)).slice (-2) +"/"+
-                    date.getFullYear();
-
-                    setFechaSalida(f);
+            const f= ("0"+date.getDate()).slice(2) +"/"+
+                     ("0"+(date.getMonth()+1)).slice(2)+"/"+
+                     date.getFullYear();
+            setFechaSalida(f);
           }}
           style={{padding:10,borderRadius:5,marginBottom:10}}/>
         ):(
@@ -567,14 +569,14 @@ export default function TripsPage() {
         )}
          <Text style={styles.label}>Fecha de Llegada:</Text>
         {Platform.OS === "web" ?(
-          <input type="date" onChange={(e)=>{
-            const date=new Date(e.target.value);
-            const f= 
-                    ("0" + date.getDate()).slice(-2) +"/" +
-                    ("0" + (date.getMonth () +1)).slice (-2) +"/"+
-                    date.getFullYear();
-
-                    setFechaSalida(f);
+          <input type="date" value={fechaLlegada ? new Date(parseDate(fechaLlegada)).toISOString().split("T")[0] : ""}
+          onChange={(e)=>{
+            const date =new Date (e.target.value);
+             const f= 
+                      ("0" +date.getDate()).slice(2) +"/"+
+                      ("0" +(date.getMonth()+1)).slice(2)+"/"+
+                      date.getFullYear();
+                      setFechaLlegada(f);
           }}
           style={{padding:10,borderRadius:5,marginBottom:10}}/>
         ):(

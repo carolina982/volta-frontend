@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { Alert, Platform } from "react-native";
 
-export const  BASE_URL="https://volta-backend-m25k.onrender.com/api";
+export const  BASE_URL="https://volta-backend-px1a.onrender.com/api";
 
 export const api=axios .create({
   baseURL:BASE_URL,

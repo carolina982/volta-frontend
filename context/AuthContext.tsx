@@ -12,7 +12,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<any>(null);
   const [token, setToken] = useState<string | null>(null);
-  const API_URL= "https://volta-backend-m25k.onrender.com:3000"
+  const API_URL= "https://volta-backend-px1a.onrender.com:3000"
   useEffect(() => {
 
     const savedUser = localStorage.getItem("user");
