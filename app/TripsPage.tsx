@@ -179,11 +179,16 @@ export default function TripsPage() {
     }
     setModalVisible(true);
   };
-  const parseDate = (dateStr: string) => {
-    const [day, month, year] = dateStr.split("/");
-    return new Date(Number(year), Number(month) - 1, Number(day));
+
+  const parseDate =(dateStr:string)=>{
+    const [day,month,year]=dateStr.split("/");
+    return new Date(
+      Number(year),
+      Number(month)-1,
+      Number (day),
+      12,0,0
+    );
   };
-  
   const saveTrip = async () => {
   const estadoCalculado = fechaLlegada && fechaLlegada.trim() !== "" ? "completado" : "pendiente";
 
@@ -539,9 +544,10 @@ export default function TripsPage() {
            : ""
           }
           onChange={(e)=>{
-            const date=new Date(e.target.value);
-            const f= ("0"+date.getDate()).slice(2) +"/"+
-                     ("0"+(date.getMonth()+1)).slice(2)+"/"+
+            const [yaer,month,day]=e.target.value.split("-");
+            const date =new Date(Number(yaer),Number(month)-1,Number(day),12);
+            const f= ("0"+date.getDate()).slice(-2) +"/"+
+                     ("0"+(date.getMonth()+1)).slice(-2)+"/"+
                      date.getFullYear();
             setFechaSalida(f);
           }}
@@ -549,7 +555,7 @@ export default function TripsPage() {
         ):(
           <>
           <TouchableOpacity onPress={()=>setShowLlegadaPicker(true)}>
-            <TextInput value="fechaSalida" placeholder="Seleccionar fecha" editable={false} style={styles.input}/>
+            <TextInput value={fechaSalida} placeholder="Seleccionar fecha" editable={false} style={styles.input}/>
           </TouchableOpacity>
           { setShowSalidaPicker && (
             <DateTimePicker value={new Date()} mode="date" display="default" onChange={(event,date)=>{
@@ -571,10 +577,11 @@ export default function TripsPage() {
         {Platform.OS === "web" ?(
           <input type="date" value={fechaLlegada ? new Date(parseDate(fechaLlegada)).toISOString().split("T")[0] : ""}
           onChange={(e)=>{
-            const date =new Date (e.target.value);
+           const [yaer,month,day]=e.target.value.split("-");
+            const date =new Date(Number(yaer),Number(month)-1,Number(day),12);
              const f= 
-                      ("0" +date.getDate()).slice(2) +"/"+
-                      ("0" +(date.getMonth()+1)).slice(2)+"/"+
+                      ("0" +date.getDate()).slice(-2) +"/"+
+                      ("0" +(date.getMonth()+1)).slice(-2)+"/"+
                       date.getFullYear();
                       setFechaLlegada(f);
           }}
@@ -582,7 +589,7 @@ export default function TripsPage() {
         ):(
           <>
           <TouchableOpacity onPress={()=>setShowLlegadaPicker(true)}>
-            <TextInput value="fechaLlegada" placeholder="Seleccionar fecha" editable={false} style={styles.input}/>
+            <TextInput value={fechaLlegada} placeholder="Seleccionar fecha" editable={false} style={styles.input}/>
           </TouchableOpacity>
           { setShowSalidaPicker && (
             <DateTimePicker value={new Date()} mode="date" display="default" onChange={(event,date)=>{
@@ -594,12 +601,12 @@ export default function TripsPage() {
                   date.getFullYear();
 
                   setFechaLlegada(f);
-              }
-            }}
+                }
+              }}
             />
           )}
-          </>
-        )}
+        </>
+      )}
 
         </>
         ) : (
