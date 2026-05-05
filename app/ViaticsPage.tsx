@@ -590,12 +590,14 @@ const openModal =(viatico?:Viatico)=>{
                 <TextInput value={conceptos[`${base} Costo`]}
                    onChangeText={(t)=>setConceptos
                     ({...conceptos,[`${base} Costo`]: t})}keyboardType="numeric"mode="flat"underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}placeholder="Costo"/>
+                    
                 {base === "Casetas efectivo" && (
                   <View style={{marginBottom:10}}>
                     <Text style={styles.label}>Subir foto :</Text>
                     {casetaFoto ? (
                       <>
                       <Image source={{uri:casetaFoto}} style={styles.facturaPreview}/>
+
                       <View style={{flexDirection:"row",gap:10}}>
                         <Button mode="contained" buttonColor="#0d75bb" onPress={pickCasetaFoto}>Remplazar</Button>
                         <Button mode="contained" buttonColor="#0d75bb" onPress={()=>{setCasetaFoto(null);setCasetaFotoRemoved(true);}}>Eliminar</Button>

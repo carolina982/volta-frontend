@@ -18,6 +18,7 @@ export interface User {
     nombre:string;
     tipo:string;
     placa?:string;
+
  }
 
  //viatico

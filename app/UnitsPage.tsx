@@ -1,4 +1,6 @@
 import { Picker } from "@react-native-picker/picker";
+import * as DocumentPicker from "expo-document-picker";
+import * as Linking from "expo-linking";
 import React, { useEffect, useState } from "react";
 import { Alert, FlatList, Modal, Platform, StyleSheet, Text, View } from "react-native";
 import { Button, TextInput, } from "react-native-paper";
@@ -14,6 +16,11 @@ interface Unit {
   estado: "Disponible" | "Mantenimiento" | "Ocupado";
   tipoRemolque?:"Lowboy" |"Caja Seca" |"";
   placaRemolque?:string;
+  inventarios?: {
+  _id: string;
+  archivo: string;
+  fecha: string;
+}[];
 }
 
 export default function UnitsPage() {
@@ -31,6 +38,8 @@ export default function UnitsPage() {
   
   const unidadesConRemolque=["002","007"];
   const [mostrarRemolque,setMostrarRemolque]=useState(false);
+  const [pdf,setPdf]= useState <DocumentPicker.DocumentPickerAsset | null>(null);
+  const [inventarios,setInventarios]=useState([]);
 
   useEffect(() => {
     loadUnits();
@@ -48,6 +57,7 @@ export default function UnitsPage() {
         estado:u.estado,
         tipoRemolque:u.tipoRemolque || "",
         placaRemolque:u.placaRemolque || "",
+        inventarios:u.inventarios || [],
       }));
       setUnits(mappedUnits);
     } catch (error) {
@@ -106,6 +116,16 @@ export default function UnitsPage() {
       Alert.alert("Error", "No se pudo guardar la unidad");
     }
   };
+
+  const pickPDF=async ()=>{
+    const result=await DocumentPicker.getDocumentAsync({
+      type:"application/pdf",
+    });
+    if (result.assets &&  result.assets.length > 0){
+      setPdf(result.assets[0]);
+    }
+  };
+
   const deleteUnit = async(id:string)=>{
     console.log ("Eliminar unidad id",id);
     let confirmed =false;
@@ -133,6 +153,94 @@ export default function UnitsPage() {
       Alert.alert("Error", "No se pudo eliminar la unidad")
     }
   };
+
+  const subirInventario = async () => {
+  if (!pdf) {
+    Alert.alert("Error", "Seleciona PDF ");
+    return;
+  }
+  if (!editingUnit) {
+    Alert.alert("Error", "Selecciona la unidad");
+    return;
+  }
+
+  try {
+    const formData = new FormData();
+
+    formData.append("file", {
+      uri: pdf.uri,
+      name: pdf.name,
+      type: "application/pdf",
+    } as any);
+
+    await api.post(`/units/${editingUnit.id}/inventario`, formData, {
+      headers: {
+        "Content-Type": "multipart/form-data", // ✅ CORREGIDO
+      },
+    });
+
+  
+    const res = await api.get(`/units/${editingUnit.id}`);
+    const u = res.data;
+
+    setEditingUnit({
+      id: u.id,
+      nombre: u.nombre,
+      placas: u.placas,
+      modelo: u.modelo,
+      capacidad: String(u.capacidad),
+      estado: u.estado,
+      tipoRemolque: u.tipoRemolque || "",
+      placaRemolque: u.placaRemolque || "",
+      inventarios: u.inventarios || [],
+    });
+
+    await loadUnits();
+    setPdf(null);
+
+    Alert.alert("Exito", "Inventario subido correctamente");
+  } catch (error) {
+    console.error(error);
+    Alert.alert("Error", "No se pudo subir el inventario");
+  }
+};
+
+  const eliminarInventario=async (inventarioId:string)=>{
+    if (!editingUnit) return;
+    try{
+      await api.delete(`/units/${editingUnit.id}/inventarios/${inventarioId}`);
+
+     const res=await api.get(`/units/${editingUnit.id}`);
+     const u=res.data;
+     setEditingUnit({
+       id: u.id,
+        nombre:u.nombre,
+        placas:u.placas,
+        modelo:u.modelo,
+        capacidad:String(u.capacidad),
+        estado:u.estado,
+        tipoRemolque:u.tipoRemolque || "",
+        placaRemolque:u.placaRemolque || "",
+        inventarios:u.inventarios || [],
+     });
+      
+      Alert.alert("Exito","Inventario eliminado");
+      loadUnits();
+    }catch (error){
+      console.error(error);
+      Alert.alert("Error","No se pudo eliminar");
+    }
+  };
+
+  const abrirPDF =async (url:string)=>{
+    const supported=await Linking.canOpenURL(url);
+    if (supported){
+      await Linking.openURL(url);
+    }else{
+      Alert.alert("Error","No se puede abrir PDF")
+    }
+  };
+  
   const renderItem = ({ item }: { item: Unit }) => {
     let estadoColor = "#4caf50"; //Disponible
     if (item.estado === "Mantenimiento") estadoColor = "#ff9800";
@@ -198,9 +306,25 @@ export default function UnitsPage() {
                 )}
                <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 15 }}>
                <Button mode="contained" buttonColor="#888" textColor="rgb(243, 246, 248)" onPress={() => setModalVisible(false)}>Cancelar</Button>
-               <Button mode="contained" buttonColor="#0d75bb" textColor="rgb(243, 246, 248)"onPress={saveUnit}>Guardar</Button>
+               <Button mode="contained" buttonColor="#0d75bb" textColor="rgb(243, 246, 248)"onPress={saveUnit}>Guardar</Button> 
           </View>
-        </View>
+          
+               <Text style={{fontWeight:"bold",marginTop:20}}>Inventario</Text>
+               <Button mode="contained" buttonColor="#0d4b75" onPress={pickPDF}>Seleccionar PDF</Button>
+               {pdf && (
+                <Text style={{marginTop:5}}>Archivo :{pdf.name}</Text>
+               )}
+               <Button mode="contained" buttonColor="#0d4b75" style={{marginTop:10}} onPress={subirInventario}>Subir Inventario</Button>
+
+               {editingUnit?.inventarios?.map((inv)=>(
+                <View key={inv._id}  style={{flexDirection:"row",marginTop:10,gap:10}}>
+                  <Text>PDF</Text>
+                  <Text> Fecha :{new Date(inv.fecha).toLocaleDateString()}</Text>
+                  <Button mode="contained" buttonColor="#0d4b75" style={{marginTop:5}} onPress={()=>abrirPDF(inv.archivo)}>Ver  PDF</Button>
+                  <Button mode="contained" buttonColor="red" style={{marginTop:5}} onPress={()=>eliminarInventario(inv._id)}>Eliminar</Button>
+                  </View>
+               ))}       
+          </View>
         </SafeAreaView>
       </Modal>
     </View>
