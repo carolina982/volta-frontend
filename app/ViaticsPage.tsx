@@ -11,7 +11,7 @@ import { useStore } from "../context/Store";
 import { api, BASE_URL } from "../services/api";
 import { Viatico } from "../types";
 
-interface Trip { id: string;nombre: string; conductorId: string; conductorNombre?: string;}
+interface Trip { id: string;nombre: string; conductorId: string; conductorNombre?: string; rutaAcubrir?:string; destino?:string}
 
 
 const conceptosBase = [ "Comidas","Hospedaje", "Taxi","Regaderas",
@@ -94,7 +94,16 @@ export default function ViaticsPage() {
   useEffect(()=>{loadTrips(); }, [currentUser]);
 
   
-  useEffect(()=>{if(currentUser){loadTrips();loadViaticos();}},[currentUser,filter,conductorFilter]);
+ useEffect (() =>{
+  if (currentUser){
+    loadTrips();
+  }
+ },[currentUser]);
+ useEffect(()=>{
+  if (trips.length >0){
+    loadViaticos();
+  }
+ },[trips.filter,conductorFilter]);
   const loadTrips = async () => {
     try {
       const res = await api.get("/trips");
@@ -114,62 +123,109 @@ export default function ViaticsPage() {
     }
   };
 
-  const loadViaticos = async () => {
-    try {
-      const res = await api.get(`/viatics?filter=${filter}`);
+ const loadViaticos = async () => {
+  try {
 
-      let viaticosData = res.data.map((v: any) => ({
-        ...v,
-        id: v._id,
-        facturaUrl: v.factura ? `${BASE_URL.replace("/api", "")}${v.factura}` : undefined
-      }));
-                      
-      if (currentUser?.rol === "Chofer") {
-        viaticosData = viaticosData.filter((v: any) =>
-          trips.find(t => t.id === v.tripId)?.conductorId === currentUser.id
-        );
-      }
+    const res = await api.get(`/viatics?filter=${filter}`);
 
-      if (conductorFilter) {
-        viaticosData = viaticosData.filter((v: any) => {
-          const trip=trips.find((t)=>t.id === (typeof v.tripId === "object" ? v.tripId._id : v.tripId));
-          return trip && trip.conductorId === conductorFilter;
-        });
-      }
-      console.log("TRIPS:",trips);
-      console.log("VIATICOS RAW:" ,viaticosData);
-      viaticosData =viaticosData.map((v:any)=>{
-        const conceptosPlano:any ={};
-        conceptosBase.forEach(base=>{
-          conceptosPlano[`${base} Cantidad`]=v.conceptos?.[base]?.cantidad ?? 0;
-          conceptosPlano[`${base} Costo`]=v.conceptos?.[base]?.costo ?? 0;
-        });
-        return{
-          ...v,
-          conceptos:conceptosPlano,
-          dieselCargas:v.dieselCargas ?? 0,
-          dieselCosto:v.dieselCosto ?? 0,
-          tag:v.tag ?? 0,
-          total:v.total ?? 0,
-        };
+    let viaticosData = res.data.map((v: any) => ({
+      ...v,
+      id: v._id,
+
+      facturaUrl: v.factura
+        ? `${BASE_URL.replace("/api", "")}${v.factura}`
+        : undefined,
+    }));
+
+    if (currentUser?.rol === "Chofer") {
+      viaticosData = viaticosData.filter((v: any) => {
+
+        const tripId =
+          typeof v.tripId === "object" && v.tripId !== null
+            ? v.tripId._id
+            : v.tripId;
+
+        const trip = trips.find((t: any) => t.id === tripId);
+
+        return trip?.conductorId === currentUser.id;
+      });
+    }
+
+    // Filtrar conductor
+    if (conductorFilter) {
+
+      viaticosData = viaticosData.filter((v: any) => {
+
+        const tripId =
+          typeof v.tripId === "object" && v.tripId !== null
+            ? v.tripId._id
+            : v.tripId;
+
+        const trip = trips.find((t: any) => t.id === tripId);
+
+        return trip && trip.conductorId === conductorFilter;
+      });
+    }
+
+    console.log("TRIPS:", trips);
+    console.log("VIATICOS RAW:", viaticosData);
+
+    viaticosData = viaticosData.map((v: any) => {
+
+      const tripId =
+        typeof v.tripId === "object" && v.tripId !== null
+          ? v.tripId._id
+          : v.tripId;
+
+      const trip = trips.find((t: any) => t.id === tripId);
+
+      const conceptosPlano: any = {};
+
+      conceptosBase.forEach(base => {
+        conceptosPlano[`${base} Cantidad`] =
+          v.conceptos?.[base]?.cantidad ?? 0;
+        conceptosPlano[`${base} Costo`] =
+          v.conceptos?.[base]?.costo ?? 0;
       });
 
-     viaticosData=viaticosData.map((v:Viatico)=>{
-      const trip=trips.find(t=>t.id === v.tripId);
-      return{
+      return {
         ...v,
-        viajeNombre:trip?.nombre,
-        conductorNombre:trip?.conductorNombre ?? "Sin asignar",
-      };
-     });
-      setViaticos(viaticosData);
-      calcularTotalDieselGlobal(viaticosData);
+        conceptos: conceptosPlano,
+        dieselCargas: v.dieselCargas ?? 0,
+        dieselCosto:
+          v.dieselCosto ??
+          v.diselCosto ??
+          0,
 
-    } catch (e) {
-      console.error(e);
-      Alert.alert("Error", "No se pudieron cargar los viáticos");
-    }
-  };
+        tag: v.tag ?? 0,
+        total: v.total ?? 0,
+        viajeNombre:
+          v.tripNombre ||
+          trip?.rutaAcubrir ||
+          trip?.destino ||
+          (v.tripId as any)?.rutaAcubrir ||
+          (v.tripId as any)?.destino ||
+          "Sin viaje",
+
+        conductorNombre:
+          v.conductorNombre ||
+          trip?.conductorNombre ||
+          (v.tripId as any)?.conductorNombre ||
+          "Sin asignar",
+      };
+    });
+
+    setViaticos(viaticosData);
+    calcularTotalDieselGlobal(viaticosData);
+
+  } catch (e) {
+    console.error(e);
+    Alert.alert(
+      "Error",
+      "No se pudieron cargar los viáticos"
+    );
+  }
+};
 
   const calcularTotal = () => {
     let total = 0;
@@ -222,7 +278,7 @@ const exportViaticosToExcel =async ()=>{
       const dayNumber=date.getDate();
       
       const tripId=typeof v.tripId === "object" ? v.tripId :v.tripId;
-      const trip=trips.find(t=>t.id  === tripId);
+      const trip=trips.find(t=>t.id === (typeof v.tripId === "object" ? (v.tripId as any)._id:v.tripId));
       const viajeNombre= v.viajeNombre || trip?.nombre || (v.tripId as any)?.nombre || "N/A";
       const conductorNombre=v.conductorNombre || trip?.conductorNombre || (v.tripId as any)?.conductorNombre || "Sin asignar";
       const dieselTotal= Array.isArray((v as any).dieselHistorial) ?(v as any).dieselHistorial.reduce((acc:number,d:any)=>acc+Number (d.costo || 0),0):Number(v.dieselCosto || 0);
@@ -524,18 +580,20 @@ const openModal =(viatico?:Viatico)=>{
     }
   };
 
-  const renderItem=({item}:{item:Viatico})=>{
-    const viajeNombre=(item.tripId as any)?.nombre ;
-    const conductorNombre=(item.tripId as any)?.conductorNombre ?? "Sin asignar"
-    return(
+  const renderItem =({item}:{item: Viatico})=>{
+    
+    const viajeNombre =item.tripNombre || item.tripviajeNombre  || "Sin asiganr ";
+
+    const conductorNombre=item.conductorNombre || "Sin asignar";
+    return (
       <View style={styles.card}>
         <Text style={styles.title}>Viatico:{viajeNombre}</Text>
-        <Text style={styles.subtitle}>Conductor:{conductorNombre }</Text>
+        <Text style={styles.subtitle}>Conductor :{conductorNombre}</Text>
         <Text style={styles.total}>Total:${item.total}</Text>
-      <View style={styles.buttonRow}>
-        <Button mode="contained" buttonColor="#0d75bb" textColor="rgb(243, 246, 248)"style={styles.button}onPress={()=>openModal(item)}>Ver detalles</Button>
-        <Button mode="contained" buttonColor="#e53935"textColor="rgb(243, 246, 248)" style={styles.button} onPress={() => deleteViatico(item.id)}>Eliminar</Button>
-      </View>
+        <View style={styles.buttonRow}>
+          <Button mode="contained" buttonColor="#0d75bb"textColor="rgb(243, 246 ,248)" style={styles.button} onPress={()=>openModal(item)}>Ver detalles</Button>
+          <Button mode="contained" buttonColor="#e53935" textColor="rgb(243,246,248)" style={styles.button} onPress={()=>deleteViatico(item.id)}>Eliminar</Button>
+        </View>
       </View>
     )
   }
@@ -567,7 +625,7 @@ const openModal =(viatico?:Viatico)=>{
           <Picker selectedValue={tripId} onValueChange={setTripId} style={styles.picker}>
             <Picker.Item label="Selecciona un viaje" value />
             {trips.map(t => (
-              <Picker.Item key={t.id} label={`${t.nombre} (${t.conductorNombre})`}value={t.id}/>
+             <Picker.Item key={t.id} label={`${t.rutaAcubrir|| t.destino || "Sin viaje"}(${t.conductorNombre || " Sin"})`} value={t.id}/>
             ))}
           </Picker>
             <View style={{ flexDirection: "row" }}>
