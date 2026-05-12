@@ -1,6 +1,5 @@
 import { Picker } from "@react-native-picker/picker";
 import * as DocumentPicker from "expo-document-picker";
-import * as Linking from "expo-linking";
 import React, { useEffect, useState } from "react";
 import { Alert, FlatList, Modal, Platform, StyleSheet, Text, View } from "react-native";
 import { Button, TextInput, } from "react-native-paper";
@@ -45,11 +44,13 @@ export default function UnitsPage() {
     loadUnits();
   }, []);
 
+  console.log(editingUnit?.inventarios);
+  
   const loadUnits = async () => {
     try {
       const res = await api.get("/units");
       const mappedUnits= res.data.map((u:any)=> ({
-        id:u.id,
+        id:u.id || u._id,
         nombre:u.nombre,
         placas:u.placas,
         modelo:u.modelo,
@@ -154,56 +155,29 @@ export default function UnitsPage() {
     }
   };
 
-  const subirInventario = async () => {
-  if (!pdf) {
-    Alert.alert("Error", "Seleciona PDF ");
-    return;
-  }
-  if (!editingUnit) {
-    Alert.alert("Error", "Selecciona la unidad");
-    return;
-  }
 
-  try {
-    const formData = new FormData();
+  const subirInventario=async ()=>{
+    if (!pdf){
+      Alert.alert("Error","Selecciona PDF ");
+      return;
+    }
+    if (!editingUnit){
+      Alert.alert("Error","Selecciona la unidad");
+      return;
+    }
+    try {
+      const formData =new FormData();
+      const response =await fetch(pdf.uri);
+      const blob =await response.blob();
+      formData.append("file",blob,pdf.name);
+      await api.post(`/units/${editingUnit.id}/inventario`,formData);
+      Alert.alert("Exito","Inventario subido correctamente");
+    }catch (error:any){
+      console.log("error?.response.data");
+      Alert.alert("Error",JSON.stringify(error?.response?.data || error));
+    }
+  };
 
-    formData.append("file", {
-      uri: pdf.uri,
-      name: pdf.name,
-      type: "application/pdf",
-    } as any);
-
-    await api.post(`/units/${editingUnit.id}/inventario`, formData, {
-      headers: {
-        "Content-Type": "multipart/form-data", // ✅ CORREGIDO
-      },
-    });
-
-  
-    const res = await api.get(`/units/${editingUnit.id}`);
-    const u = res.data;
-
-    setEditingUnit({
-      id: u.id,
-      nombre: u.nombre,
-      placas: u.placas,
-      modelo: u.modelo,
-      capacidad: String(u.capacidad),
-      estado: u.estado,
-      tipoRemolque: u.tipoRemolque || "",
-      placaRemolque: u.placaRemolque || "",
-      inventarios: u.inventarios || [],
-    });
-
-    await loadUnits();
-    setPdf(null);
-
-    Alert.alert("Exito", "Inventario subido correctamente");
-  } catch (error) {
-    console.error(error);
-    Alert.alert("Error", "No se pudo subir el inventario");
-  }
-};
 
   const eliminarInventario=async (inventarioId:string)=>{
     if (!editingUnit) return;
@@ -232,16 +206,24 @@ export default function UnitsPage() {
     }
   };
 
-  const abrirPDF =async (url:string)=>{
-    const supported=await Linking.canOpenURL(url);
-    if (supported){
-      await Linking.openURL(url);
-    }else{
-      Alert.alert("Error","No se puede abrir PDF")
+  const abrirPDF=async (url:string)=>{
+    try {
+      if (!url.startsWith("http")){
+        url=`${api.defaults.baseURL}${url}`;
+      }
+      if (Platform.OS === "web"){
+        window.open(url,"_blank");
+      }else {
+        Alert.alert("Error","No se puede abrir PDF");
+      }
+    }catch (error){
+      console.error(error);
+      Alert.alert ("Error" ,"No se pudo abrir PDF ")
     }
   };
-  
-  const renderItem = ({ item }: { item: Unit }) => {
+
+
+    const renderItem = ({ item }: { item: Unit }) => {
     let estadoColor = "#4caf50"; //Disponible
     if (item.estado === "Mantenimiento") estadoColor = "#ff9800";
     if (item.estado === "Ocupado") estadoColor = "#f44336";
@@ -315,15 +297,17 @@ export default function UnitsPage() {
                 <Text style={{marginTop:5}}>Archivo :{pdf.name}</Text>
                )}
                <Button mode="contained" buttonColor="#0d4b75" style={{marginTop:10}} onPress={subirInventario}>Subir Inventario</Button>
-
                {editingUnit?.inventarios?.map((inv)=>(
-                <View key={inv._id}  style={{flexDirection:"row",marginTop:10,gap:10}}>
-                  <Text>PDF</Text>
-                  <Text> Fecha :{new Date(inv.fecha).toLocaleDateString()}</Text>
-                  <Button mode="contained" buttonColor="#0d4b75" style={{marginTop:5}} onPress={()=>abrirPDF(inv.archivo)}>Ver  PDF</Button>
-                  <Button mode="contained" buttonColor="red" style={{marginTop:5}} onPress={()=>eliminarInventario(inv._id)}>Eliminar</Button>
+                <View key={inv._id} style={{marginTop:15,backgroundColor:"#fff",padding:10,borderRadius:8}}>
+                  <Text style={{fontWeight:"bold"}}>PDF Inventario</Text>
+                  <Text>fecha:{""}{new Date(inv.fecha).toLocaleDateString()}</Text>
+                  <View style={{flexDirection:"row",marginTop:10,gap:10}}>
+                    <Button mode="contained" buttonColor="#0d75bb" onPress={()=>abrirPDF(inv.archivo)}>ver pdf</Button>
+                    <Button mode="contained" buttonColor="red" onPress={()=>eliminarInventario(inv._id)}>Eliminar</Button>
                   </View>
-               ))}       
+                </View>
+               ))}
+                   
           </View>
         </SafeAreaView>
       </Modal>

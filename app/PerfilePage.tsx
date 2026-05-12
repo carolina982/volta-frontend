@@ -28,67 +28,74 @@ export default function PerfilPage({
   const [apellido, setApellido] = useState(currentUser.apellido);
   const [rol, setRol] = useState<"Admin" | "Chofer">(currentUser.rol);
   const [email, setEmail] = useState(currentUser.email);
-  const [contacto ,setContacto]=useState(currentUser.contacto);
-  useEffect (()=> {
+  const [contacto ,setContacto]=useState(currentUser.contacto); 
+  const [photoUri,setPhotoUri]=useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect (()=>{
     if (currentUser){
       setContacto(currentUser.contacto || "");
       setNombre(currentUser.nombre || "");
       setApellido(currentUser.apellido || "");
       setEmail(currentUser.email || "");
       setRol(currentUser.rol || "Chofer");
+
+      setPhotoUri(
+        currentUser.photoUrl ? `https://volta-backend-px1a.onrender.com${currentUser.photoUrl}` :null
+      );
     }
   },[currentUser]);
- 
-  const [photoUri, setPhotoUri] = useState<string | null>(
-    currentUser.photoUrl
-      ? `https://volta-backend-px1a.onrender.com${currentUser.photoUrl}`
-      : null
-  );
-  const [isSaving, setIsSaving] = useState(false);
   
 
+  const handleSave=async ()=>{
+    setIsSaving(true);
+    try {
+      const formData=new FormData();
+      formData.append("nombre",nombre);
+      formData.append("apellido",apellido);
+      formData.append("email",email);
+      formData.append("rol",rol);
+      formData.append("contacto",contacto);
 
- const handleSave = async () => {
-  setIsSaving(true);
-
-  try {
-    const formData = new FormData();
-
-    formData.append("nombre", nombre);
-    formData.append("apellido", apellido);
-    formData.append("email", email);
-    formData.append("rol", rol);
-    formData.append("contacto",contacto);
-
-    if (photoUri && photoUri.startsWith("file://")) {
-      formData.append("photo", {
-        uri: photoUri,
-        name: "profile.jpg",
-        type: "image/jpeg",
-      } as any);
+      if (photoUri && (photoUri.startsWith("file://") || photoUri.startsWith("blob:"))){
+       if (Platform.OS === "web"){
+        const response =await fetch (photoUri);
+        const blob=await response.blob();
+        formData.append("photo",blob,"profile.jpeg");
+      }else {
+        formData.append("photo",{
+          uri:photoUri,
+          name:"profile.jpeg",
+          type:"image/jpeg",
+        }as any);
+      }
+    };
+   
+      console.log("PHOTO URI",photoUri);
+      const res=await fetch(`https://volta-backend-px1a.onrender.com/api/users/${currentUser._id}`,
+        {
+          method:"PATCH",
+          body:formData,
+        }
+      );
+      const data =await res.json();
+      console.log("Respuesta",data);
+      if (data.photoUrl){
+        setPhotoUri(`https://volta-backend-px1a.onrender.com${data.photoUrl}`)
+      }
+      if (setCurrentUser){
+        setCurrentUser(data);
+      }
+      Alert.alert("Exito","Perfil actualizado correctamente");
+    }catch (error){
+      console.log(error),
+      Alert.alert("Error","No se pudo actualizar el perfil");
+    }finally{
+      setIsSaving(false);
     }
+  };
 
-    console.log("id",currentUser._id);
-    const res=await fetch(`https://volta-backend-px1a.onrender.com/api/users/${currentUser._id}`,{
-      method:"PATCH",
-      body:formData,
-    }
-    );
-    const data = await res.json();
 
-   // actualizar usuario en app
-    if (setCurrentUser) {
-      setCurrentUser(data);
-    }
-
-    Alert.alert("Éxito", "Perfil actualizado correctamente");
-  } catch (error) {
-    console.log(error);
-    Alert.alert("Error", "No se pudo actualizar el perfil");
-  } finally {
-    setIsSaving(false);
-  }
-};
   const pickerImage =async ()=>{
     const permission= await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted){
@@ -104,6 +111,7 @@ export default function PerfilPage({
       setPhotoUri(uri);
     }
   };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#f5f7fa" }}>
       <ScrollView
