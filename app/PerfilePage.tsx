@@ -39,11 +39,16 @@ export default function PerfilPage({
       setApellido(currentUser.apellido || "");
       setEmail(currentUser.email || "");
       setRol(currentUser.rol || "Chofer");
-
-      setPhotoUri(
-        currentUser.photoUrl ? `https://volta-backend-px1a.onrender.com${currentUser.photoUrl}` :null
-      );
+      
+  if (currentUser.photoUrl){
+    const  imageURL=currentUser.photoUrl.startsWith("http")
+    ? currentUser.photoUrl
+    :`https://volta-backend-px1a.onrender.com${currentUser.photoUrl}`
+  }else{
+    setPhotoUri(null);
+  }
     }
+
   },[currentUser]);
   
 
@@ -81,11 +86,12 @@ export default function PerfilPage({
       const data =await res.json();
       console.log("Respuesta",data);
       if (data.photoUrl){
-        setPhotoUri(`https://volta-backend-px1a.onrender.com${data.photoUrl}`)
+        setPhotoUri(`https://volta-backend-px1a.onrender.com${data.photoUrl}?t=${Date.now()}`)
       }
-      if (setCurrentUser){
-        setCurrentUser(data);
-      }
+     if (setCurrentUser){
+      const updatedPhotoUrl=`https://volta-backend-px1a.onrender.com${data.photoUrl}?t=${Date.now()}`
+
+     }
       Alert.alert("Exito","Perfil actualizado correctamente");
     }catch (error){
       console.log(error),
