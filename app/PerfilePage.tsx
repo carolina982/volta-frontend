@@ -32,25 +32,28 @@ export default function PerfilPage({
   const [photoUri,setPhotoUri]=useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect (()=>{
-    if (currentUser){
-      setContacto(currentUser.contacto || "");
-      setNombre(currentUser.nombre || "");
-      setApellido(currentUser.apellido || "");
-      setEmail(currentUser.email || "");
-      setRol(currentUser.rol || "Chofer");
-      
-  if (currentUser.photoUrl){
-    const  imageURL=currentUser.photoUrl.startsWith("http")
-    ? currentUser.photoUrl
-    :`https://volta-backend-px1a.onrender.com${currentUser.photoUrl}`
-  }else{
-    setPhotoUri(null);
-  }
-    }
+  useEffect(() => {
+  if (currentUser) {
 
-  },[currentUser]);
-  
+    setContacto(currentUser.contacto || "");
+    setNombre(currentUser.nombre || "");
+    setApellido(currentUser.apellido || "");
+    setEmail(currentUser.email || "");
+    setRol(currentUser.rol || "Chofer");
+
+    if (currentUser.photoUrl) {
+
+      const imageURL = currentUser.photoUrl.startsWith("http")
+        ? currentUser.photoUrl
+        : `https://volta-backend-px1a.onrender.com${currentUser.photoUrl}`;
+
+      setPhotoUri(imageURL);
+
+    } else {
+      setPhotoUri(null);
+    }
+  }
+}, [currentUser]);
 
   const handleSave=async ()=>{
     setIsSaving(true);
@@ -88,10 +91,14 @@ export default function PerfilPage({
       if (data.photoUrl){
         setPhotoUri(`https://volta-backend-px1a.onrender.com${data.photoUrl}?t=${Date.now()}`)
       }
-     if (setCurrentUser){
-      const updatedPhotoUrl=`https://volta-backend-px1a.onrender.com${data.photoUrl}?t=${Date.now()}`
 
-     }
+      if (setCurrentUser){
+        const updatedPhotoUrl =`https://volta-backend-px1a.onrender.com${data.photoUrl}?t=${Date.now}`;
+        setCurrentUser({
+          ...data,
+          photoUrl:updatedPhotoUrl,
+        });
+      }
       Alert.alert("Exito","Perfil actualizado correctamente");
     }catch (error){
       console.log(error),
