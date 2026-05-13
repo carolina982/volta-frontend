@@ -1,7 +1,8 @@
 import { Picker } from "@react-native-picker/picker";
 import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useState } from "react";
-import { Alert, FlatList, Modal, Platform, StyleSheet, Text, View } from "react-native";
+import { Alert, FlatList, Image, Modal, Platform, StyleSheet, Text, View } from "react-native";
 import { Button, TextInput, } from "react-native-paper";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "../services/api";
@@ -20,6 +21,7 @@ interface Unit {
   archivo: string;
   fecha: string;
 }[];
+ imagenUrl?: string;
 }
 
 export default function UnitsPage() {
@@ -39,6 +41,7 @@ export default function UnitsPage() {
   const [mostrarRemolque,setMostrarRemolque]=useState(false);
   const [pdf,setPdf]= useState <DocumentPicker.DocumentPickerAsset | null>(null);
   const [inventarios,setInventarios]=useState([]);
+  const [imagenUrl,setImagenUrl]=useState("");
 
   useEffect(() => {
     loadUnits();
@@ -59,6 +62,7 @@ export default function UnitsPage() {
         tipoRemolque:u.tipoRemolque || "",
         placaRemolque:u.placaRemolque || "",
         inventarios:u.inventarios || [],
+        imagenUrl:u.imagenUrl || "",
       }));
       setUnits(mappedUnits);
     } catch (error) {
@@ -76,6 +80,7 @@ export default function UnitsPage() {
       setEstado(unit.estado);
       setTipoRemolque(unit.tipoRemolque || "");
       setPlacaRemolque(unit.placaRemolque || "");
+      setImagenUrl(unit.imagenUrl || "");
 
     } else {
       setEditingUnit(null);
@@ -124,6 +129,17 @@ export default function UnitsPage() {
     });
     if (result.assets &&  result.assets.length > 0){
       setPdf(result.assets[0]);
+    }
+  };
+  
+  const  pickerImage =async ()=>{
+    const result= await ImagePicker.launchImageLibraryAsync({
+      mediaTypes:ImagePicker.MediaTypeOptions.Images,
+      allowsEditing:true,
+      quality:0.7,
+    });
+    if (!result.canceled){
+      setImagenUrl(result.assets[0].uri);
     }
   };
 
@@ -228,32 +244,36 @@ export default function UnitsPage() {
     if (item.estado === "Mantenimiento") estadoColor = "#ff9800";
     if (item.estado === "Ocupado") estadoColor = "#f44336";
     return (
-      <View style={styles.card}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          <Text style={styles.title}>{item.nombre}</Text>
-          <View style={[styles.estadoBadge, { backgroundColor: estadoColor }]}>
-            <Text style={styles.estadoText}>{item.estado}</Text>
-          </View>
-        </View>
-          <Text>Modelo: {item.modelo}</Text>
-          <Text>Capacidad: {item.capacidad}</Text>
-          <Text>Placas: {item.placas}</Text>
-          {unidadesConRemolque.includes(item.nombre)&&(
-          <>
-          <Text style={{fontWeight:"bold",marginTop:5}}>Tipo Remolque</Text>
-          <Text>{item.tipoRemolque || "Ninguno"}</Text>
-          {item.placaRemolque?(
-            <Text>Placa remolque:{item.placaRemolque}</Text>
-          ):null}
-          </>
-        )}
-        <View style={{ flexDirection: "row", marginTop: 10, gap: 10 }}>
-          <Button mode="contained" buttonColor="#0d75bb"textColor="rgb(243, 246, 248)" onPress={() => openModal(item)}> Editar </Button>
-          <Button mode="contained" buttonColor="red" textColor="rgb(243, 246, 248)"onPress={() =>deleteUnit(item.id)}>Eliminar</Button>
-        </View>
+      <View style={[styles.card,{flexDirection: "row",alignItems: "center",},]}>
+         <Image source={{uri:item.imagenUrl ||"https://via.placeholder.com/120",}}style={styles.unitImage}/>
+        <View style={{ flex: 1, marginLeft: 15 }}>
+          <View style={{flexDirection: "row",justifyContent: "space-between",alignItems: "center",}}>
+            <Text style={styles.title}>{item.nombre} </Text>
+            <View  style={[styles.estadoBadge,{ backgroundColor: estadoColor },]}>
+              <Text style={styles.estadoText}> {item.estado}</Text>
+              </View>
+               </View>
+                <Text>Modelo: {item.modelo}</Text>
+                <Text> Capacidad: {item.capacidad}</Text>
+                <Text>Placas: {item.placas}</Text>
+                {unidadesConRemolque.includes(item.nombre
+                 ) && (
+                 <>
+                 <Text style={{fontWeight: "bold",marginTop: 5, }}>  Tipo Remolque</Text>
+                 <Text>{item.tipoRemolque || "Ninguno"}</Text>
+                 {item.placaRemolque ? (
+                  <Text>Placa remolque:{item.placaRemolque}</Text>
+                ) : null}
+                 </>
+                 )}
+                 <View style={{flexDirection: "row",marginTop: 10, gap: 10,}}>
+                  <Button mode="contained"buttonColor="#0d75bb"textColor="rgb(243, 246, 248)"onPress={() => openModal(item)}> Editar </Button>
+                  <Button mode="contained" buttonColor="red" textColor="rgb(243, 246, 248)"onPress={() => deleteUnit(item.id)}> Eliminar</Button>
+                </View>
+         </View>
       </View>
     );
-  };
+   };
   return (
     <View style={styles.container}>
        <Text style={styles.title}>Unidades Registradas</Text>
@@ -318,7 +338,9 @@ export default function UnitsPage() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 15, backgroundColor: "#f5f5f5" },
   card: { backgroundColor: "#fff",padding: 15,marginBottom: 12,borderRadius: 12,shadowColor: "#000",shadowOpacity: 0.05,shadowOffset: { width: 0, height: 2 },shadowRadius: 5,elevation: 2, },
+  uniImage:{width:120,height:120,borderRadius:12,marginTop:15},
   title: { fontSize: 22, fontWeight: "bold", marginBottom: 5 },
+  unitImage:{width:180,height:180, borderRadius:18,marginRight:18},
   pageTitle: { fontSize: 22, fontWeight: "bold", marginBottom: 15, color: "#0d75bb" },
   estadoBadge: {paddingHorizontal: 8,paddingVertical: 3,borderRadius: 12,},
   estadoText: { color: "#fff", fontWeight: "bold" },
