@@ -91,13 +91,17 @@ export default function PerfilPage({
       if (data.photoUrl){
         setPhotoUri(`https://volta-backend-px1a.onrender.com${data.photoUrl}?t=${Date.now()}`)
       }
-
       if (setCurrentUser){
-        const updatedPhotoUrl =`https://volta-backend-px1a.onrender.com${data.photoUrl}?t=${Date.now}`;
-        setCurrentUser({
+        const upatedPhotoUrl=`https://volta-backend-px1a.onrender.com${data.photoUrl}?t=${Date.now()}`;
+        const updatedUser={
+          ...currentUser,
           ...data,
-          photoUrl:updatedPhotoUrl,
-        });
+          photoUrl:upatedPhotoUrl,
+        };
+        setCurrentUser(updatedUser);
+        
+
+        
       }
       Alert.alert("Exito","Perfil actualizado correctamente");
     }catch (error){
@@ -105,6 +109,8 @@ export default function PerfilPage({
       Alert.alert("Error","No se pudo actualizar el perfil");
     }finally{
       setIsSaving(false);
+      
+   
     }
   };
 
