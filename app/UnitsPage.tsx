@@ -276,12 +276,12 @@ export default function UnitsPage() {
     if (item.estado === "Mantenimiento") estadoColor = "#ff9800";
     if (item.estado === "Ocupado") estadoColor = "#f44336";
     return (
-      <View style={[styles.card,{flexDirection: "row",alignItems: "center",},]}>
+      <View style={[styles.card,{flexDirection:Platform.OS === "web" ? "row":"column",alignItems:"center"}]}>
 
          <Image source={{uri:item.imagenUrl ||'https://reactjs.org/logo-og.png',}}style={styles.unitImage}/>
          <Button mode="contained" buttonColor="#0d4b75" onPress={()=>seleccionarImagenUnidad(item.id)}>Foto</Button>
 
-        <View style={{ flex: 1, marginLeft: 15 }}>
+        <View style={{ flex: 1, width:"100%",marginLeft:Platform.OS === "web" ?15:0}}>
           <View style={{flexDirection: "row",justifyContent: "space-between",alignItems: "center",}}>
             <Text style={styles.title}>{item.nombre} </Text>
             <View  style={[styles.estadoBadge,{ backgroundColor: estadoColor },]}>
@@ -373,7 +373,7 @@ export default function UnitsPage() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 15, backgroundColor: "#f5f5f5" },
   card: { backgroundColor: "#fff",padding: 15,marginBottom: 12,borderRadius: 12,shadowColor: "#000",shadowOpacity: 0.05,shadowOffset: { width: 0, height: 2 },shadowRadius: 5,elevation: 2, },
-  uniImage:{width:120,height:120,borderRadius:12,marginTop:15},
+  uniImage:{width:Platform.OS ==="web" ? 180:220,height:Platform.OS === "web" ? 180:220,borderRadius:12,marginTop:15},
   title: { fontSize: 22, fontWeight: "bold", marginBottom: 5 },
   unitImage:{width:180,height:180, borderRadius:18,marginRight:18},
   pageTitle: { fontSize: 22, fontWeight: "bold", marginBottom: 15, color: "#0d75bb" },
