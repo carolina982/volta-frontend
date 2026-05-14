@@ -107,6 +107,7 @@ export default function UnitsPage() {
       modelo,capacidad,
       estado,tipoRemolque,
       placaRemolque:tipoRemolque ? placaRemolque:"",
+      imagenUrl,
     };
 
     try {
@@ -131,7 +132,7 @@ export default function UnitsPage() {
       setPdf(result.assets[0]);
     }
   };
-  
+
   const  pickerImage =async ()=>{
     const result= await ImagePicker.launchImageLibraryAsync({
       mediaTypes:ImagePicker.MediaTypeOptions.Images,
@@ -140,6 +141,37 @@ export default function UnitsPage() {
     });
     if (!result.canceled){
       setImagenUrl(result.assets[0].uri);
+    }
+  };
+
+ const seleccionarImagenUnidad=async(unitId:string)=>{
+    try{
+      const result=await ImagePicker.launchImageLibraryAsync({
+        mediaTypes:ImagePicker.MediaTypeOptions.Images,
+        allowsEditing:true,
+        quality:0.7
+      });
+      if (result.canceled) return;
+      const imageUri=result.assets[0].uri;
+      const formData=new FormData();
+      const response=await fetch(imageUri);
+      const blob= await response.blob();
+      formData.append(
+        "image",blob,`unidad_${Date.now()}.jpg`
+      );
+      await api.post(`/units/${unitId}/image`,
+      formData,
+      {
+        headers:{
+          "Content-Type":"multipart/formData",
+        },
+      }
+    );
+    Alert.alert("Exito","Image actualizada");
+    await loadUnits ();
+    }catch (error){
+      console.error(error);
+      Alert.alert("Error","No se puede subir imagen");
     }
   };
 
@@ -245,7 +277,10 @@ export default function UnitsPage() {
     if (item.estado === "Ocupado") estadoColor = "#f44336";
     return (
       <View style={[styles.card,{flexDirection: "row",alignItems: "center",},]}>
-         <Image source={{uri:item.imagenUrl ||"https://via.placeholder.com/120",}}style={styles.unitImage}/>
+
+         <Image source={{uri:item.imagenUrl ||'https://reactjs.org/logo-og.png',}}style={styles.unitImage}/>
+         <Button mode="contained" buttonColor="#0d4b75" onPress={()=>seleccionarImagenUnidad(item.id)}>Foto</Button>
+
         <View style={{ flex: 1, marginLeft: 15 }}>
           <View style={{flexDirection: "row",justifyContent: "space-between",alignItems: "center",}}>
             <Text style={styles.title}>{item.nombre} </Text>
@@ -290,7 +325,7 @@ export default function UnitsPage() {
                <TextInput placeholder="Capacidad"value={capacidad}onChangeText={setCapacidad}mode="flat"underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"placeholderTextColor="#000"dense contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input}/>
                <TextInput placeholder="Estado (Disponible / Mantenimiento / Ocupado)"value={estado}onChangeText={(text) => setEstado(text as Unit["estado"])} mode="flat"underlineColor="#0d75bb"
                activeUnderlineColor="#0d75bb"  placeholderTextColor="#000" dense contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input}/>
-               
+              
                {mostrarRemolque && (
                <>
                <Text style={{ fontWeight: "bold", marginTop: 5 }}>Tipo de remolque</Text>
