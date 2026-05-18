@@ -143,56 +143,38 @@ export default function UnitsPage() {
       setImagenUrl(result.assets[0].uri);
     }
   };
+  
 
-const seleccionarImagenUnidad = async (unitId: string) => {
-  try {
-     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.7,
-    });
-    if (result.canceled) return; 
-    const imageUri = result.assets[0].uri;
-    const formData = new FormData();
-    if (Platform.OS === "web") {
-      const response = await fetch(imageUri);
-      const blob = await response.blob();
+ const seleccionarImagenUnidad=async(unitId:string)=>{
+    try{
+      const result=await ImagePicker.launchImageLibraryAsync({
+        mediaTypes:ImagePicker.MediaTypeOptions.Images,
+        allowsEditing:true,
+        quality:0.7
+      });
+      if (result.canceled) return;
+      const imageUri=result.assets[0].uri;
+      const formData=new FormData();
+      const response=await fetch(imageUri);
+      const blob= await response.blob();
       formData.append(
-        "image",
-        new File([blob], `unidad_${Date.now()}.jpg`, {
-          type: blob.type,
-        })
+        "image",blob,`unidad_${Date.now()}.jpg`
       );
-    } else {
-      formData.append("image", {
-        uri: imageUri,
-        name: `unidad_${Date.now()}.jpg`,
-        type: "image/jpeg",
-       } as any);
-    }
-    const res = await api.post(
-      `/units/${unitId}/image`,
-      formData,{
-        headers: {
-          "Content-Type": "multipart/form-data",
+      await api.post(`/units/${unitId}/image`,
+      formData,
+      {
+        headers:{
+          "Content-Type":"multipart/form-Data",
         },
       }
     );
-    const nuevaImagen = `${res.data.imagenUrl}?t=${Date.now()}`;
-    setUnits((prev) =>
-      prev.map((u) =>
-        u.id === unitId
-          ? { ...u,imagenUrl: nuevaImagen,}
-          : u
-      )
-    );
-    Alert.alert("Éxito", "Imagen actualizada");
-  } catch (error) {
-    console.error(error);
-    Alert.alert("Error", "No se pudo subir imagen");
-  }
-};
-
+    Alert.alert("Exito","Image actualizada");
+    await loadUnits ();
+    }catch (error){
+      console.error(error);
+      Alert.alert("Error","No se puede subir imagen");
+    }
+  };
 
   const deleteUnit = async(id:string)=>{
     console.log ("Eliminar unidad id",id);
@@ -313,7 +295,7 @@ const seleccionarImagenUnidad = async (unitId: string) => {
                 {unidadesConRemolque.includes(item.nombre
                  ) && (
                  <>
-                 <Text style={{fontWeight: "bold",marginTop: 5, }}> Tipo Remolque</Text>
+                 <Text style={{fontWeight: "bold",marginTop: 5, }}>  Tipo Remolque</Text>
                  <Text>{item.tipoRemolque || "Ninguno"}</Text>
                  {item.placaRemolque ? (
                   <Text>Placa remolque:{item.placaRemolque}</Text>
