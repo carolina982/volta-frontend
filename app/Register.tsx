@@ -51,60 +51,81 @@ export default function Register({ navigation }: any) {
     });
     if (!result.canceled) setPhotoUrl(result.assets[0].uri);
   };
+  
+const handleRegister = async () => {
+  if (!email || !nombre || !apellido || !password || !confirmPassword || !rol) {
+    Alert.alert("Error", "Todos los campos son obligatorios");
+    return;
+  }
 
-  const handleRegister = async () => {
-    if (!email || !nombre || !apellido || !password || !confirmPassword || !rol) {
-      Alert.alert("Error", "Todos los campos son obligatorios");
-      return;
-    }
-    if (password !== confirmPassword) {
-      Alert.alert("Error", "Las contraseñas no coinciden");
-      return;
-    }
+  if (password !== confirmPassword) {
+    Alert.alert("Error", "Las contraseñas no coinciden");
+    return;
+  }
 
-    try {
-      let res;
-      if (photoUrl) {
-        const formData = new FormData();
-        formData.append("name", nombre);
-        formData.append("apellido", apellido);
-        formData.append("email", email.toLowerCase());
-        formData.append("password", password);
-        formData.append("rol", rol);
-        if (Platform.OS === "web") {
-          const response = await fetch(photoUrl);
-          const blob = await response.blob();
-          const filename = `imagen_${Date.now()}.jpg`;
-          formData.append("imagenUrl", new File([blob], filename, { type: blob.type }));
-          res = await api.post("/users/register", formData);
+  try {
+    let res;
+
+    if (photoUrl) {
+      const formData = new FormData();
+      formData.append("nombre", nombre);
+      formData.append("apellido", apellido);
+      formData.append("email", email.toLowerCase());
+      formData.append("password", password);
+      formData.append("rol", rol);
+
+      if (Platform.OS === "web") {
+        const response = await fetch(photoUrl);
+        const blob = await response.blob();
+
+        const filename = `imagen_${Date.now()}.jpg`;
+
+        formData.append(
+          "photo",
+          new File([blob], filename, {
+            type: blob.type,
+          })
+        );
+        res = await api.post("/users/register", formData);
         } else {
-          const uriParts = photoUrl.split(".");
-          const fileType = uriParts[uriParts.length - 1];
-          formData.append(
-            "image",
-            { uri: photoUrl, name: `imagen.${fileType}`, type: `image/${fileType}` } as any
-          );
-          res = await api.post("/users/register", formData, {
-            headers: { "Content-Type": "multipart/form-data" },
+        const uriParts = photoUrl.split(".");
+        const fileType = uriParts[uriParts.length - 1];
+        formData.append(
+          "photo",
+          {
+            uri: photoUrl,
+            name: `imagen.${fileType}`,
+            type: `image/${fileType}`,
+          } as any
+        );
+        res = await api.post("/users/register", formData, {
+          headers: {
+            "Content-Type": "multipart/form-data",
+           },
           });
         }
-      } else {
-        const newUser={nombre,apellido,email:email.toLocaleLowerCase(),password,rol};
-        res = await api.post("/users/register", newUser);
+
+       } else {
+       const newUser = { nombre, apellido,email: email.toLowerCase(),password,rol,};
+       res = await api.post("/users/register", newUser);
       }
 
       if (res.status === 200 || res.status === 201) {
-        Alert.alert("Éxito", "Usuario registrado correctamente");
-        addUser(res.data);
-        navigation.replace("Login");
-      } else {
-        Alert.alert("Error", "No se pudo registrar el usuario");
-      }
-    } catch (error: any) {
+      Alert.alert("Éxito", "Usuario registrado correctamente");
+      addUser(res.data);
+      navigation.replace("Login");
+       } else {
+       Alert.alert("Error", "No se pudo registrar el usuario");
+        }
+        } catch (error: any) {
       console.error("Error registrando usuario:", error.response || error);
-      Alert.alert("Error", error.response?.data?.message || "Algo salió mal");
-    }
-  };
+      Alert.alert(
+      "Error",
+      error.response?.data?.message || "Algo salió mal"
+    );
+  }
+};
+
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
