@@ -16,6 +16,7 @@ export default function Register({ navigation }: any) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [rol, setRol] = useState<"Admin" | "Chofer">("Chofer" );
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [contacto,setContacto]=useState("");
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -73,6 +74,7 @@ const handleRegister = async () => {
       formData.append("email", email.toLowerCase());
       formData.append("password", password);
       formData.append("rol", rol);
+      formData.append("contacto",contacto);
 
       if (Platform.OS === "web") {
         const response = await fetch(photoUrl);
@@ -106,7 +108,7 @@ const handleRegister = async () => {
         }
 
        } else {
-       const newUser = { nombre, apellido,email: email.toLowerCase(),password,rol,};
+       const newUser = { nombre, apellido,email: email.toLowerCase(),password,rol,contacto};
        res = await api.post("/users/register", newUser);
       }
 
@@ -134,7 +136,7 @@ const handleRegister = async () => {
       <TextInput placeholder="Nombre" value={nombre} onChangeText={setNombre} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} />
       <TextInput placeholder="Apellido" value={apellido} onChangeText={setApellido} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} />
       <TextInput placeholder="Correo" value={email} onChangeText={setEmail} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} keyboardType="email-address" />
-      
+        <TextInput placeholder="Contacto" value={contacto} onChangeText={setContacto} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input}/>
       <TextInput placeholder="Contraseña"  value={password} onChangeText={setPassword} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input} secureTextEntry={!showPassword} right={<TextInput.Icon icon={showPassword ? "eye-off" : "eye"} color="#007bff" onPress={() => setShowPassword(!showPassword)} />} />
       
       <TextInput placeholder="Confirmar contraseña"  value={confirmPassword} onChangeText={setConfirmPassword} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input} secureTextEntry={!showConfirmPassword} right={<TextInput.Icon icon={showConfirmPassword ? "eye-off" : "eye"} color="#007bff" onPress={() => setShowConfirmPassword(!showConfirmPassword)} />} />
