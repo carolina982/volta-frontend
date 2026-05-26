@@ -13,50 +13,67 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const router =useRouter();
- 
-  const handledLogin = async ()=>{
-    if (!email || !password){
-      Alert.alert("Error","Por favor acompleta todos los campos");
+
+  const handledLogin = async () => {
+    if (!email || !password) {
+      Alert.alert("Error", "Por favor completa todos los campos");
       return;
     }
     setLoading(true);
     try {
-      const response=await fetch ("https://volta-backend-px1a.onrender.com/api/auth/login",
+      const response = await fetch(
+        "https://volta-backend-px1a.onrender.com/api/auth/login",
         {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({email:email.trim().toLowerCase(),password,}),
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email: email.trim().toLowerCase(),
+            password,
+          }),
+        }
+      );
+      const data = await response.json();
+      console.log("Respuesta login:", data);
+      if (!response.ok) {
+        Alert.alert("Error", data.message || "Ocurrió un problema al iniciar sesión");
+        return;
       }
+      if (!data.token) {
+        Alert.alert("Error", "No se recibió token del servidor");
+        return;
+      }
+      // guardar token
+      if (Platform.OS === "web") {
+        localStorage.setItem("token", data.token);
+      } else {
+        await AsyncStorage.setItem("token", data.token);
+      }
+
+      //  guardar en store (CORRECTO)
+      login({
+        _id:data.id,
+        id:data.id,
+        nombre:data.nombre,
+        apellido:data.apellido,
+        email:data.email,
+        rol:data.rol,
+        photoUrl:data.photoUrl,
+        contacto:data.contacto,
+      },
+      data.token
     );
-    let data;
-    try{
-      data=await response.json();
-    }catch{
-      data={};
+      Alert.alert("Éxito", "Inicio de sesión correcto");
+      router.replace("/Dashboard");
+    } catch (error) {
+      console.error("Login error", error);
+      Alert.alert("Error", "No se pudo iniciar sesión. Intenta más tarde");
+    } finally {
+      setLoading(false)
     }
-    if (!response.ok){
-      Alert.alert("Error", data.message || "Ocurrio un problema al iniciar sesion");
-      return;
-    }
-   if (Platform.OS === "web"){
-    localStorage.setItem("token",data.token);
-   }else{
-    await AsyncStorage.setItem("token",data.token)
-   }
-    if (!data || !data.user){
-      Alert.alert("Error","Respuesta inalidad del servidor");
-      return;
-    }
-    login(data.user );
-    router.replace("/Dashboard");
-    console .log("Respuesta login",data)
-    }catch (error){
-      console.error("Login error",error);
-      Alert.alert("Error","No se pudo iniciar sesion .Intenta mas tarder");
-    }finally{
-      setLoading(false);
-    }
-  };
+    };
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} >
       <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">

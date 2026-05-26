@@ -1,12 +1,15 @@
 import { Picker } from "@react-native-picker/picker";
 import * as ImagePicker from "expo-image-picker";
+import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Image, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { TextInput } from "react-native-paper";
 import { useStore } from "../context/Store";
 import { api } from "../services/api";
 
-export default function Register({ navigation }: any) {
+export default function Register() {
+  const router=useRouter();
+
   const { addUser } = useStore();
 
   const [email, setEmail] = useState("");
@@ -17,6 +20,7 @@ export default function Register({ navigation }: any) {
   const [rol, setRol] = useState<"Admin" | "Chofer">("Chofer" );
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [contacto,setContacto]=useState("");
+  
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -54,7 +58,7 @@ export default function Register({ navigation }: any) {
   };
   
 const handleRegister = async () => {
-  if (!email || !nombre || !apellido || !password || !confirmPassword || !rol) {
+  if (!email || !nombre || !apellido ||!contacto ||  !password || !confirmPassword || !rol) {
     Alert.alert("Error", "Todos los campos son obligatorios");
     return;
   }
@@ -85,13 +89,13 @@ const handleRegister = async () => {
         formData.append(
           "photo",
           new File([blob], filename, {
-            type: blob.type,
+            type: "image/jpeg",
           })
         );
         res = await api.post("/users/register", formData);
         } else {
-        const uriParts = photoUrl.split(".");
-        const fileType = uriParts[uriParts.length - 1];
+        const uriParts = photoUrl?.split(".")|| [];
+        const fileType = uriParts[uriParts.length - 1] || "jpg";
         formData.append(
           "photo",
           {
@@ -115,7 +119,7 @@ const handleRegister = async () => {
       if (res.status === 200 || res.status === 201) {
       Alert.alert("Éxito", "Usuario registrado correctamente");
       addUser(res.data);
-      navigation.replace("Login");
+       router.replace("/Login")
        } else {
        Alert.alert("Error", "No se pudo registrar el usuario");
         }
@@ -172,7 +176,7 @@ const handleRegister = async () => {
         <Text style={styles.buttonText}>Registrarse</Text>
       </TouchableOpacity>
       
-      <TouchableOpacity style={styles.registerButton} onPress={() => navigation.navigate("Login")}>
+      <TouchableOpacity style={styles.registerButton} onPress={() =>router.push("/Login")}>
         <Text style={styles.registerText}>¿Ya tienes cuenta? Inicia Sesión</Text>
       </TouchableOpacity>
     </ScrollView>

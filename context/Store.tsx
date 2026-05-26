@@ -15,12 +15,16 @@ if (Platform.OS !== 'web') {
 
 interface StoreContextProps {
   currentUser: User | null;
+  token:string | null;
   users: User[];
   trips: Trip[];
   units: Unit[];
   viatics: Viatico[];
 
+
   setCurrentUser: (user: User | null) => void;
+  setToken:(token:string | null)=>void;
+ 
   addUser: (user: User) => void;
   updateUser: (user: User) => void;
   removeUser: (userId: string) => void;
@@ -39,7 +43,7 @@ interface StoreContextProps {
   removeUnit: (unitId: string) => void;
 
 
-  login: (user: User) => void;
+  login: (user: User,token:string) => void;
   logout: () => void;
 }
 
@@ -49,6 +53,7 @@ const StoreContext = createContext<StoreContextProps>({} as StoreContextProps);
 
 export const StoreProvider = ({ children }: { children: ReactNode }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [token,setToken]=useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -124,7 +129,7 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     setUnits((prev) => prev.filter((u) => u.id !== unitId));
 
 
-  const login = (user: User) => setCurrentUser(user);
+  const login =(user:User,token:string)=>{setCurrentUser(user);setToken(token)};
   const logout =async()=>{
     try {
       if (Platform.OS === "web"){
@@ -133,6 +138,7 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
         await AsyncStorage.removeItem("storeData");
       }
       setCurrentUser(null);
+      setToken(null);
     }catch (error){
       console.error("Error cerrando sesion",error);
     }
@@ -140,8 +146,15 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   return (
     <StoreContext.Provider
       value={{
-        currentUser, users, trips, units, viatics,
-        setCurrentUser, addUser, updateUser, removeUser,
+        currentUser,
+        token,
+        users, 
+        trips, 
+        units, 
+        viatics,
+        setCurrentUser,
+        setToken, 
+        addUser, updateUser, removeUser,
         addTrip, updateTrip, removeTrip, addViatic,
         updateViatic, removeViatic, addUnit, updateUnit,
         removeUnit, login, logout,
