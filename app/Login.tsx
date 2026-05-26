@@ -53,7 +53,7 @@ export default function Login() {
 
       //  guardar en store (CORRECTO)
       login({
-        _id:data.user.id,
+        _id:data.user._id,
         id:data.user.id,
         nombre:data.user.nombre,
         apellido:data.user.apellido,
