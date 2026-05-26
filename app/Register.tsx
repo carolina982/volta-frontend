@@ -94,7 +94,7 @@ const handleRegister = async () => {
         );
         res = await api.post("/users/register", formData);
         } else {
-        const uriParts = photoUrl?.split(".")|| [];
+        const uriParts = photoUrl.split(".") || [];
         const fileType = uriParts[uriParts.length - 1] || "jpg";
         formData.append(
           "photo",

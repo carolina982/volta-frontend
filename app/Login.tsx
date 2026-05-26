@@ -53,14 +53,14 @@ export default function Login() {
 
       //  guardar en store (CORRECTO)
       login({
-        _id:data.id,
-        id:data.id,
-        nombre:data.nombre,
-        apellido:data.apellido,
-        email:data.email,
-        rol:data.rol,
-        photoUrl:data.photoUrl,
-        contacto:data.contacto,
+        _id:data.user.id,
+        id:data.user.id,
+        nombre:data.user.nombre,
+        apellido:data.user.apellido,
+        email:data.user.email,
+        rol:data.user.rol,
+        photoUrl:data.user.photoUrl,
+        contacto:data.user.contacto,
       },
       data.token
     );
