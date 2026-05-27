@@ -98,10 +98,7 @@ export default function PerfilPage({
           ...data,
           photoUrl:upatedPhotoUrl,
         };
-        setCurrentUser(updatedUser);
-        
-
-        
+        setCurrentUser(updatedUser);    
       }
       Alert.alert("Exito","Perfil actualizado correctamente");
     }catch (error){

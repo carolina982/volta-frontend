@@ -42,7 +42,7 @@ export default function Dashboard() {
       case "Inicio":
         return <HomePage currentUser={currentUser} />;
       case "Perfil":
-        return <PerfilePage currentUser={currentUser} />;
+        return(<PerfilePage currentUser={currentUser} setCurrentUser={setCurrentUser}/>);
       case "Viajes":
         return <TripsPage />;
       case "Viáticos":
