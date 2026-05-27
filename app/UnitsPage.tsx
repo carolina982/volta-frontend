@@ -277,12 +277,12 @@ export default function UnitsPage() {
     if (item.estado === "Mantenimiento") estadoColor = "#ff9800";
     if (item.estado === "Ocupado") estadoColor = "#f44336";
     return (
-      <View style={[styles.card,{flexDirection:Platform.OS === "web" ? "row":"column"}]}>
-          
+      <View style={[styles.card,{flexDirection:Platform.OS === "web" ? "row":"column",alignItems:"center"}]}>
+
          <Image source={{uri:item.imagenUrl ||'https://reactjs.org/logo-og.png',}}style={styles.unitImage}/>
          <Button mode="contained" buttonColor="#0d4b75" onPress={()=>seleccionarImagenUnidad(item.id)}>Foto</Button>
 
-        <View style={{ flex: 1, width:"100%",marginLeft:Platform.OS === "web" ?15:0,marginTop:Platform.OS === "web" ? 0:15}}>
+        <View style={{ flex: 1, width:"100%",marginLeft:Platform.OS === "web" ?15:0}}>
           <View style={{flexDirection: "row",justifyContent: "space-between",alignItems: "center",}}>
             <Text style={styles.title}>{item.nombre} </Text>
             <View  style={[styles.estadoBadge,{ backgroundColor: estadoColor },]}>
