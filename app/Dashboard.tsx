@@ -47,6 +47,7 @@ export default function Dashboard() {
         return <TripsPage />;
       case "Viáticos":
         return <ViaticsPage />;
+        //cehcar 
       case "Unidades":
         return currentUser.rol?.toLowerCase() === "admin" ? <UnitsPage /> : null;
       case "Usuarios":

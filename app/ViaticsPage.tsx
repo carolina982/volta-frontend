@@ -11,8 +11,12 @@ import { useStore } from "../context/Store";
 import { api, BASE_URL } from "../services/api";
 import { Viatico } from "../types";
 
-interface Trip { id: string;nombre: string; conductorId: string; conductorNombre?: string; rutaAcubrir?:string; destino?:string}
-
+interface Trip { id: string;
+                 nombre: string; 
+                 conductorId: string; 
+                 conductorNombre?: string; 
+                 rutaAcubrir?:string; 
+                 destino?:string};
 
 const conceptosBase = [ "Comidas","Hospedaje", "Taxi","Regaderas",
   "Pensión","Vulcanizadora","Casetas efectivo","Limpieza Unidad",
@@ -282,6 +286,7 @@ const exportViaticosToExcel =async ()=>{
       const viajeNombre= v.viajeNombre || trip?.nombre || (v.tripId as any)?.nombre || "N/A";
       const conductorNombre=v.conductorNombre || trip?.conductorNombre || (v.tripId as any)?.conductorNombre || "Sin asignar";
       const dieselTotal= Array.isArray((v as any).dieselHistorial) ?(v as any).dieselHistorial.reduce((acc:number,d:any)=>acc+Number (d.costo || 0),0):Number(v.dieselCosto || 0);
+      
       //cambio  de mes 
       if (monthName !== currentMonth){
         if (monthTotal > 0){
@@ -727,6 +732,7 @@ const openModal =(viatico?:Viatico)=>{
                   <Image source={{ uri: factura }} style={styles.facturaPreview} />
                 )
               ) : (
+                
               <Button mode="contained"buttonColor="#0d75bb" textColor="rgb(243, 246, 248)"onPress={() => setShowFactura(true)}>Mostrar Factura</Button>
               )}
               <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 10, marginTop: 5 }}>
