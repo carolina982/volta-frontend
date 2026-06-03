@@ -286,7 +286,7 @@ const exportViaticosToExcel =async ()=>{
       const viajeNombre= v.viajeNombre || trip?.nombre || (v.tripId as any)?.nombre || "N/A";
       const conductorNombre=v.conductorNombre || trip?.conductorNombre || (v.tripId as any)?.conductorNombre || "Sin asignar";
       const dieselTotal= Array.isArray((v as any).dieselHistorial) ?(v as any).dieselHistorial.reduce((acc:number,d:any)=>acc+Number (d.costo || 0),0):Number(v.dieselCosto || 0);
-      
+
       //cambio  de mes 
       if (monthName !== currentMonth){
         if (monthTotal > 0){
@@ -313,6 +313,7 @@ const exportViaticosToExcel =async ()=>{
         weekTotal=0;
         dayTotal=0;
       }
+
       // cambio de semana 
       if (weekNumber !== currentWeek){
         if (currentWeek !== 0){
@@ -322,6 +323,7 @@ const exportViaticosToExcel =async ()=>{
         currentWeek=weekNumber;
         weekTotal=0;
       }
+
       // cambio de dia 
       if (dayNumber !== currentDay){
         if (currentDay !== 0){
@@ -430,7 +432,8 @@ const openModal =(viatico?:Viatico)=>{
   setFacturaRemoved(false);
   setShowFactura(false);
   setModalVisible(true);
-}
+};
+
  const pickFactura = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({ type: ["image/*", "application/pdf"] });
@@ -545,6 +548,7 @@ const openModal =(viatico?:Viatico)=>{
     setLoading(false);
   }
 };
+
   const calcularTotalDieselGlobal =(viaticosData:Viatico[])=>{
     let total =0;
     viaticosData.forEach(v=>{

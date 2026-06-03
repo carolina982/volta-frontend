@@ -2,7 +2,7 @@ import { Picker } from "@react-native-picker/picker";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useState } from "react";
-import { Alert, FlatList, Image, Modal, Platform, StyleSheet, Text, View } from "react-native";
+import { Alert, FlatList, Image, Modal, Platform, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { Button, TextInput, } from "react-native-paper";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "../services/api";
@@ -42,7 +42,9 @@ export default function UnitsPage() {
   const [pdf,setPdf]= useState <DocumentPicker.DocumentPickerAsset | null>(null);
   const [inventarios,setInventarios]=useState([]);
   const [imagenUrl,setImagenUrl]=useState("");
-
+  
+  const {width}=useWindowDimensions();
+  const isMobile=width <768;
   useEffect(() => {
     loadUnits();
   }, []);
@@ -277,12 +279,12 @@ export default function UnitsPage() {
     if (item.estado === "Mantenimiento") estadoColor = "#ff9800";
     if (item.estado === "Ocupado") estadoColor = "#f44336";
     return (
-      <View style={[styles.card,{flexDirection:Platform.OS === "web" ? "row":"column",alignItems:"center"}]}>
+      <View style={[styles.card,{flexDirection:isMobile?"column":"row",alignItems:isMobile?"center":"flex-start",}]}>
 
          <Image source={{uri:item.imagenUrl ||'https://reactjs.org/logo-og.png',}}style={styles.unitImage}/>
          <Button mode="contained" buttonColor="#0d4b75" onPress={()=>seleccionarImagenUnidad(item.id)}>Foto</Button>
 
-        <View style={{ flex: 1, width:"100%",marginLeft:Platform.OS === "web" ?15:0}}>
+        <View style={{ flex:1,width:"100%",minWidth:0,marginLeft:isMobile? 0:15, marginTop:isMobile ?10:0,}}>
           <View style={{flexDirection: "row",justifyContent: "space-between",alignItems: "center",}}>
             <Text style={styles.title}>{item.nombre} </Text>
             <View  style={[styles.estadoBadge,{ backgroundColor: estadoColor },]}>

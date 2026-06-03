@@ -218,7 +218,7 @@ export default function TripsPage() {
   if (kilometrajeLlegada && kilometrajeLlegada.trim() !== "") {
     payload.kilometrajeLlegada=Number(kilometrajeLlegada);
   }
-  // llama a atraer el tipo de remolque 
+   // llama a atraer el tipo de remolque 
   if(mostrarRemolque){
     if(tipoRemolque)payload.tipoRemolque=tipoRemolque;
     if(placaRemolque)payload.placaRemolque=placaRemolque;
@@ -266,7 +266,7 @@ export default function TripsPage() {
     }
   };
 
-//exportacion excel 
+ //exportacion excel 
   const exportToExcel = async () => {
   try {
     if (!trips.length) {
@@ -302,7 +302,7 @@ export default function TripsPage() {
       const weekNumber = Math.ceil(salida.getDate() / 7);
       const dayNumber = salida.getDate();
 
-      //  CAMBIO DE MES
+      //CAMBIO DE MES
       if (monthName !== currentMonth) {
 
         if (currentMonth !== "") {

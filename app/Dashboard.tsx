@@ -37,7 +37,7 @@ export default function Dashboard() {
     setCurrentUser(null);
     router.replace("/Login")
   };
-  const renderContent = () => {
+  const renderContent = () => {                       
     switch (tab) {
       case "Inicio":
         return <HomePage currentUser={currentUser} />;
@@ -47,7 +47,7 @@ export default function Dashboard() {
         return <TripsPage />;
       case "Viáticos":
         return <ViaticsPage />;
-        //cehcar 
+        //cehcar por que no se quedan fijas 
       case "Unidades":
         return currentUser.rol?.toLowerCase() === "admin" ? <UnitsPage /> : null;
       case "Usuarios":
