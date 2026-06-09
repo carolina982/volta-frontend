@@ -119,7 +119,7 @@ const handleRegister = async () => {
       if (res.status === 200 || res.status === 201) {
       Alert.alert("Éxito", "Usuario registrado correctamente");
       addUser(res.data);
-       router.replace("/Login")
+       router.replace("/Dashboard")
        } else {
        Alert.alert("Error", "No se pudo registrar el usuario");
         }
@@ -176,7 +176,7 @@ const handleRegister = async () => {
         <Text style={styles.buttonText}>Registrarse</Text>
       </TouchableOpacity>
       
-      <TouchableOpacity style={styles.registerButton} onPress={() =>router.push("/Login")}>
+      <TouchableOpacity style={styles.registerButton} onPress={() =>router.push("/Dashboard")}>
         <Text style={styles.registerText}>¿Ya tienes cuenta? Inicia Sesión</Text>
       </TouchableOpacity>
     </ScrollView>

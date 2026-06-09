@@ -266,7 +266,7 @@ export default function TripsPage() {
     }
   };
 
- //exportacion excel 
+  //exportacion excel 
   const exportToExcel = async () => {
   try {
     if (!trips.length) {
@@ -332,7 +332,7 @@ export default function TripsPage() {
         currentDay = 0;
         monthTotal = 0;
         weekTotal = 0;
-        dayTotal = 0;
+        dayTotal = 0;     
       }
 
       //cambio de semana 

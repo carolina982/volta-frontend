@@ -333,6 +333,8 @@ const exportViaticosToExcel =async ()=>{
         dayTotal=0;
       }
 
+      
+
       const conceptosValores=conceptosList.map(c=>{
         if (c === "Comidas Costo"){
           const cantidad=Number(v.conceptos?.["Comidas Cantidad"]?? 0);
@@ -341,6 +343,8 @@ const exportViaticosToExcel =async ()=>{
         return Number(v.conceptos?.[c] ?? 0);
       });
       const total =Number(v.total ?? 0);
+
+
 
       ws_data.push([
         weekNumber,
@@ -606,6 +610,13 @@ const openModal =(viatico?:Viatico)=>{
       </View>
     )
   }
+
+
+
+
+
+
+
 
   return (
     <View style={styles.container}>
