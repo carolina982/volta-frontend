@@ -35,7 +35,7 @@ export default function AdminPage() {
         apellido: "",
         email: "",
         password: "",
-        rol: "Chofer",
+        rol: "Operador" ,
         photoUrl: null,
       };
       setEditingUser(newUser as User);
@@ -49,12 +49,12 @@ export default function AdminPage() {
     if (!editingUser) return;
     const {nombre, apellido, email, password, rol, photoUrl,_id } = editingUser;
     if (!nombre || !apellido || !email || (!password && isAdding) || !rol) {
-      Alert.alert("Error", "Todos los campos obligatorios deben estar completos");
+      Alert.alert("Error", "Nombre y apellido , rol son obrigatorios");
       return;
     }
     try {
       if (isAdding) {
-        await api.post("/users", { nombre, apellido, email, password, rol, photoUrl });
+        await api.post("/users", { nombre, apellido, rol, photoUrl });
         Alert.alert("Éxito", "Usuario creado correctamente");
       } else {
         const changedFields: Partial<User> = {};
@@ -134,20 +134,19 @@ const deleteUser =async (id:string)=>{
             <Text style={styles.modalTitle}>{isAdding ? "Agregar Usuario" : "Editar Usuario"}</Text>
             <TextInput placeholder="Nombre"placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}value={editingUser?.nombre}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, nombre: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb" />
             <TextInput placeholder="Apellido"placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}value={editingUser?.apellido}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, apellido: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"/>
-            <TextInput placeholder="Correo"placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}value={editingUser?.email}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, email: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"/>
-            {isAdding && (
-            <TextInput placeholder="Contraseña"placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}secureTextEntry value={editingUser?.password}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, password: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb" />
-            )}
+        
+           
             <View style={styles.pickerContainer}>
               <Picker
                 style={{height:50}}
                 selectedValue={editingUser?.rol}
                 onValueChange={(itemValue) =>
-                  editingUser && setEditingUser({ ...editingUser, rol: itemValue as "Admin" | "Chofer" })
+                  editingUser && setEditingUser({ ...editingUser, rol: itemValue as "Admin" | "Operador"})
                 }
               >
                 <Picker.Item label="Admin" value="Admin" />
-                <Picker.Item label="Chofer" value="Chofer" />
+                <Picker.Item label="Operador" value="Operador" />
+                <Picker.Item label="Ayudante General " value="Ayudante general " />
               </Picker>
             </View>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 10 }}>

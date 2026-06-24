@@ -18,6 +18,8 @@ export default function Register() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [rol, setRol] = useState<"Admin" | "Chofer">("Chofer" );
+
+  
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [contacto,setContacto]=useState("");
   

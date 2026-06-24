@@ -141,6 +141,7 @@ export default function TripsPage() {
     });
 
   }
+  
   const loadUsers = async () => {
     try {
       const res = await api.get("/users");
@@ -404,7 +405,6 @@ export default function TripsPage() {
       });
 
       const fileUri =(FileSystem as any).documentDirectory + "Reporte_Viajes.xlsx";
-
       await FileSystem.writeAsStringAsync(fileUri, base64, {
         encoding: "base64",
       });

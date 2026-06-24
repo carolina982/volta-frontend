@@ -369,7 +369,7 @@ const exportViaticosToExcel =async ()=>{
     const wb =XLSX.utils.book_new();
 
     XLSX.utils.book_append_sheet(wb,ws,"Viaticos");
-    
+     
     if (Platform.OS === "web"){
       const excelBuffer= XLSX.write(wb,{
         bookType:"xlsx",
@@ -610,13 +610,6 @@ const openModal =(viatico?:Viatico)=>{
       </View>
     )
   }
-
-
-
-
-
-
-
 
   return (
     <View style={styles.container}>

@@ -7,7 +7,7 @@ export interface User {
     contacto:string;
     email:string ;
     password?:string ;
-    rol :"Admin" |"Chofer";
+    rol :"Admin" |"Operador" | "Ayudante General";
     photoUrl?:string |null;
 }
 
