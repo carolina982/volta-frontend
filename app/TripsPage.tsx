@@ -58,14 +58,22 @@ export default function TripsPage() {
   const [tipoRemolque,setTipoRemolque]=useState("");
   const [mostrarRemolque,setMostrarRemolque]=useState(false);
   const [placaRemolque,setPlacaRemolque]=useState("");
-  
-  //agrgacion de apartado de km 
-  const [Kilometrajes,setKilometrajes]=useState([
-    {
-      km:"",
-      descripcion:""
-    },
+
+
+  // kilometraje lista 
+  const [kmSalidaList,setKmSalidaList]=useState([
+    {km: "",descripcion: ""}
   ]);
+const [kmLlegadaList,setKmLlegadaList]=useState([
+    {km: "",descripcion: ""}
+  ]);
+
+  const agregarKmSalida=()=>{
+    setKmSalidaList([...kmSalidaList,{km:"" , descripcion:""}]);
+  }
+ const agregarKmLlegada=()=>{
+    setKmLlegadaList([...kmLlegadaList,{km:"" , descripcion:""}]);
+  }
 
 
   useEffect(() => {
@@ -158,18 +166,6 @@ export default function TripsPage() {
       console.error("Error cargando usuarios:", error);
     }
   };
-
-    const agregarKilometraje=()=>{
-      setKilometrajes([
-        ...Kilometrajes,
-        {
-          km:"",
-          descripcion:""
-        },
-      ]);
-    };
-
-
   const openModal = (trip?: Trip) => {
     if (trip) {
       setEditingTrip(trip);
@@ -199,7 +195,6 @@ export default function TripsPage() {
       setDef("");
     }
     setModalVisible(true);
-  
   };
 
   const parseDate =(dateStr:string)=>{
@@ -472,8 +467,6 @@ export default function TripsPage() {
   function setFilter(itemValue: { new(fileBits: BlobPart[], fileName: string, options?: FilePropertyBag | undefined): File; prototype: File; }, itemIndex: number): void {
     throw new Error('Function not implemented.');
   }
-
-
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Viajes Registrados</Text>
@@ -551,55 +544,31 @@ export default function TripsPage() {
         <Text style={styles.label}>Destino:</Text>
          <TextInput value={destino} onChangeText={setDestino} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense  textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input} />
         <View style={styles.row}>
-          <View style={styles.field}>
-           <Text style={styles.label}>Kilometraje Salida</Text>
-           <Button mode="contained" compact onPress={agregarKilometraje}>+</Button>
-           <View style={{flexDirection:"row",marginTop:10,marginBottom:5,}}>
-            <Text style={{flex:1,fontWeight:"bold"}}>Km</Text>
-            <Text style={{flex:2,fontWeight:"bold"}}>descripcion</Text>
-           </View>
-        
-           {Kilometrajes.map((item, index) => (
-            <View key={index}style={{flexDirection: "row",marginBottom: 10,gap: 10,}}>
-               <TextInput style={[styles.input, { flex: 1 }]} keyboardType="numeric"
-                value={item.km}
-                onChangeText={(text) => {
-                  const copia = [...Kilometrajes];
-                  copia[index].km = text;
-                  setKilometrajes(copia);}}/>
-                  <TextInput style={[styles.input, { flex: 2 }]}
-                  value={item.descripcion}
-                  onChangeText={(text) => {
-                    const copia = [...Kilometrajes];
-                    copia[index].descripcion = text;setKilometrajes(copia); }}/>
-                    </View>
+          <Text style={styles.label}>Kilometraje Salida</Text>
+          <Button onPress={agregarKmSalida} compact>+</Button>
+          <View style={{ flexDirection: "row", marginTop: 10 }}>
+            <Text style={{ flex: 1, fontWeight: "bold" }}>Km</Text>
+            <Text style={{ flex: 2, fontWeight: "bold" }}>Descripción</Text>
+            </View>
+            {kmSalidaList.map((item, index) => (
+              <View key={index} style={{ flexDirection: "row", gap: 10 }}>
+                <TextInput style={{ flex: 1 }}value={item.km}onChangeText={(text) => {const copy = [...kmSalidaList];copy[index].km = text;setKmSalidaList(copy);}}/>
+                <TextInput style={{ flex: 2 }}value={item.descripcion}onChangeText={(text) => {const copy = [...kmSalidaList];copy[index].descripcion = text; setKmSalidaList(copy);}}/></View>
+              ))}
+            <View style={styles.field}>
+              <Text style={styles.label}>Kilometraje Llegada</Text>
+              <Button onPress={agregarKmLlegada} compact>+</Button>
+              <View style={{ flexDirection: "row", marginTop: 10 }}>
+                <Text style={{ flex: 1, fontWeight: "bold" }}>Km</Text>
+                <Text style={{ flex: 2, fontWeight: "bold" }}>Descripción</Text>
+                </View>
+                {kmLlegadaList.map((item, index) => (
+                  <View key={index} style={{ flexDirection: "row", gap: 10 }}>
+                    <TextInput style={{ flex: 1 }}value={item.km}onChangeText={(text) => {const copy = [...kmLlegadaList];copy[index].km = text;setKmLlegadaList(copy);}}/>
+                    <TextInput  style={{ flex: 2 }}value={item.descripcion}onChangeText={(text) => {const copy = [...kmLlegadaList];copy[index].descripcion = text;setKmLlegadaList(copy);}}/> </View>
                   ))}
-          </View>
-          <View style={styles.field}>
-            <Text style={styles.label}>Kilometraje llegada km</Text>
-            <Button mode="contained" compact onPress={agregarKilometraje}>+</Button>
-           <View style={{flexDirection:"row",marginTop:10,marginBottom:5,}}>
-            <Text style={{flex:1,fontWeight:"bold"}}>Km</Text>
-            <Text style={{flex:2,fontWeight:"bold"}}>descripcion</Text>
            </View>
-        
-           {Kilometrajes.map((item, index) => (
-            <View key={index}style={{flexDirection: "row",marginBottom: 10,gap: 10,}}>
-               <TextInput style={[styles.input, { flex: 1 }]} keyboardType="numeric"
-                value={item.km}
-                onChangeText={(text) => {
-                  const copia = [...Kilometrajes];
-                  copia[index].km = text;
-                  setKilometrajes(copia);}}/>
-                  <TextInput style={[styles.input, { flex: 2 }]}
-                  value={item.descripcion}
-                  onChangeText={(text) => {
-                    const copia = [...Kilometrajes];
-                    copia[index].descripcion = text;setKilometrajes(copia); }}/>
-                    </View>
-                  ))}
-          </View>
-        </View>
+         </View>
         <Text style={styles.label}>Fecha de Salida:</Text>
         {Platform.OS === "web" ?(
           <input type="date" value={fechaSalida 
