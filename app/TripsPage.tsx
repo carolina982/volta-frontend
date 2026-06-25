@@ -60,22 +60,6 @@ export default function TripsPage() {
   const [placaRemolque,setPlacaRemolque]=useState("");
 
 
-  // kilometraje lista 
-  const [kmSalidaList,setKmSalidaList]=useState([
-    {km: "",descripcion: ""}
-  ]);
-const [kmLlegadaList,setKmLlegadaList]=useState([
-    {km: "",descripcion: ""}
-  ]);
-
-  const agregarKmSalida=()=>{
-    setKmSalidaList([...kmSalidaList,{km:"" , descripcion:""}]);
-  }
- const agregarKmLlegada=()=>{
-    setKmLlegadaList([...kmLlegadaList,{km:"" , descripcion:""}]);
-  }
-
-
   useEffect(() => {
     if (currentUser) {
       loadTrips();
@@ -543,40 +527,17 @@ const [kmLlegadaList,setKmLlegadaList]=useState([
          <TextInput value={def} onChangeText={setDef} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} />
         <Text style={styles.label}>Destino:</Text>
          <TextInput value={destino} onChangeText={setDestino} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense  textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input} />
-        
-               //kilometraje
-
-          <View style={{ flexDirection: "row" }}>
-          <View style={{ flex:1, paddingRight:3 }}>
-          <View style={{ marginBottom: 10 }}>  
-          <Text style={styles.label}>Kilometraje Salida</Text>
-          <Button onPress={agregarKmSalida} compact>+</Button>
-          <View style={{ flexDirection: "row", marginTop: 10 }}>
-            <Text style={{ flex: 1, fontWeight: "bold" }}>Km</Text>
-            <Text style={{ flex: 2, fontWeight: "bold" }}>Descripción</Text>
-            </View>
-            {kmSalidaList.map((item, index) => (
-              <View key={index} style={{ flexDirection: "row", gap: 10 }}>
-                <TextInput style={{ flex: 1 }}value={item.km}onChangeText={(text) => {const copy = [...kmSalidaList];copy[index].km = text;setKmSalidaList(copy);}}/>
-                <TextInput style={{ flex: 2 }}value={item.descripcion}onChangeText={(text) => {const copy = [...kmSalidaList];copy[index].descripcion = text; setKmSalidaList(copy);}}/></View>
-              ))}
-              </View>
-              </View>
-              
-            <View style={styles.field}>
-              <Text style={styles.label}>Kilometraje Llegada</Text>
-              <Button onPress={agregarKmLlegada} compact>+</Button>
-              <View style={{ flexDirection: "row", marginTop: 10 }}>
-                <Text style={{ flex: 1, fontWeight: "bold" }}>Km</Text>
-                <Text style={{ flex: 2, fontWeight: "bold" }}>Descripción</Text>
-                </View>
-                {kmLlegadaList.map((item, index) => (
-                  <View key={index} style={{ flexDirection: "row", gap: 10 }}>
-                    <TextInput  mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} value={item.km}onChangeText={(text) => {const copy = [...kmLlegadaList];copy[index].km = text;setKmLlegadaList(copy);}}/>
-                    <TextInput  mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} value={item.descripcion}onChangeText={(text) => {const copy = [...kmLlegadaList];copy[index].descripcion = text;setKmLlegadaList(copy);}}/> </View>
-                  ))}
-           </View>
-         </View>
+        <View style={styles.row}>
+          <View style={styles.field}>
+            <Text style={styles.label}>Kilometraje salida km</Text>
+            
+            <TextInput value={kilometrajeSalida}onChangeText={setKilometrajeSalida}keyboardType="numeric"mode="flat"underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"dense textColor="#000"contentStyle={{color:"#000",fontWeight:"600"}}style={styles.input}/>
+          </View>
+          <View style={styles.field}>
+            <Text style={styles.label}>Kilometraje llegada km</Text>
+            <TextInput value={kilometrajeLlegada}onChangeText={setKilometrajeLlegada}keyboardType="numeric"mode="flat"underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"dense textColor="#000"contentStyle={{color:"#000",fontWeight:"600"}}style={styles.input}/>
+          </View>
+        </View>
         <Text style={styles.label}>Fecha de Salida:</Text>
         {Platform.OS === "web" ?(
           <input type="date" value={fechaSalida 
