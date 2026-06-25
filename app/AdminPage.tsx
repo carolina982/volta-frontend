@@ -48,7 +48,7 @@ export default function AdminPage() {
   const saveChanges = async () => {
     if (!editingUser) return;
     const {nombre, apellido, email, password, rol, photoUrl,_id } = editingUser;
-    if (!nombre || !apellido || !email || (!password && isAdding) || !rol) {
+    if (!nombre || !apellido || !rol) {
       Alert.alert("Error", "Nombre y apellido , rol son obrigatorios");
       return;
     }
@@ -135,18 +135,18 @@ const deleteUser =async (id:string)=>{
             <TextInput placeholder="Nombre"placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}value={editingUser?.nombre}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, nombre: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb" />
             <TextInput placeholder="Apellido"placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}value={editingUser?.apellido}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, apellido: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"/>
         
-           
+        
             <View style={styles.pickerContainer}>
               <Picker
                 style={{height:50}}
                 selectedValue={editingUser?.rol}
                 onValueChange={(itemValue) =>
-                  editingUser && setEditingUser({ ...editingUser, rol: itemValue as "Admin" | "Operador"})
+                  editingUser && setEditingUser({ ...editingUser, rol: itemValue as "Admin" | "Operador" | "Ayudante General"})
                 }
               >
                 <Picker.Item label="Admin" value="Admin" />
                 <Picker.Item label="Operador" value="Operador" />
-                <Picker.Item label="Ayudante General " value="Ayudante general " />
+                <Picker.Item label="Ayudante General " value="Ayudante General " />
               </Picker>
             </View>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 10 }}>

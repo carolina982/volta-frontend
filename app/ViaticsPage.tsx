@@ -117,7 +117,7 @@ export default function ViaticsPage() {
         conductorNombre: t.conductorNombre || t.conductor?.nombre || "Sin asignar"
       }));
 
-      if (currentUser?.rol === "Chofer")
+      if (currentUser?.rol === "Operador")
         tripsData = tripsData.filter((t: any) => t.conductorId === currentUser.id);
 
       setTrips(tripsData);
@@ -141,7 +141,7 @@ export default function ViaticsPage() {
         : undefined,
     }));
 
-    if (currentUser?.rol === "Chofer") {
+    if (currentUser?.rol === "Operador") {
       viaticosData = viaticosData.filter((v: any) => {
 
         const tripId =
@@ -615,7 +615,7 @@ const openModal =(viatico?:Viatico)=>{
     <View style={styles.container}>
       <Text style={styles.title}>Viáticos Registrados</Text>
       <Button mode="contained" buttonColor="#0d75bb"textColor="rgb(243, 246, 248)" onPress={() => openModal()}>Nuevo Viático</Button>
-      {currentUser?.rol !== "Chofer" && (
+      {currentUser?.rol !== "Operador" && (
        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10 }}>
          <Text style={{ fontWeight: "bold", marginRight: 8}}>Exportar por:</Text>
            <View style={{ flex: 1, backgroundColor: "#fff", borderRadius: 5, marginRight: 8 }}>
