@@ -543,7 +543,12 @@ const [kmLlegadaList,setKmLlegadaList]=useState([
          <TextInput value={def} onChangeText={setDef} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} />
         <Text style={styles.label}>Destino:</Text>
          <TextInput value={destino} onChangeText={setDestino} mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense  textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input} />
-        <View style={styles.row}>
+        
+               //kilometraje
+
+          <View style={{ flexDirection: "row" }}>
+          <View style={{ flex:1, paddingRight:3 }}>
+          <View style={{ marginBottom: 10 }}>  
           <Text style={styles.label}>Kilometraje Salida</Text>
           <Button onPress={agregarKmSalida} compact>+</Button>
           <View style={{ flexDirection: "row", marginTop: 10 }}>
@@ -555,6 +560,9 @@ const [kmLlegadaList,setKmLlegadaList]=useState([
                 <TextInput style={{ flex: 1 }}value={item.km}onChangeText={(text) => {const copy = [...kmSalidaList];copy[index].km = text;setKmSalidaList(copy);}}/>
                 <TextInput style={{ flex: 2 }}value={item.descripcion}onChangeText={(text) => {const copy = [...kmSalidaList];copy[index].descripcion = text; setKmSalidaList(copy);}}/></View>
               ))}
+              </View>
+              </View>
+              
             <View style={styles.field}>
               <Text style={styles.label}>Kilometraje Llegada</Text>
               <Button onPress={agregarKmLlegada} compact>+</Button>
@@ -564,8 +572,8 @@ const [kmLlegadaList,setKmLlegadaList]=useState([
                 </View>
                 {kmLlegadaList.map((item, index) => (
                   <View key={index} style={{ flexDirection: "row", gap: 10 }}>
-                    <TextInput style={{ flex: 1 }}value={item.km}onChangeText={(text) => {const copy = [...kmLlegadaList];copy[index].km = text;setKmLlegadaList(copy);}}/>
-                    <TextInput  style={{ flex: 2 }}value={item.descripcion}onChangeText={(text) => {const copy = [...kmLlegadaList];copy[index].descripcion = text;setKmLlegadaList(copy);}}/> </View>
+                    <TextInput  mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} value={item.km}onChangeText={(text) => {const copy = [...kmLlegadaList];copy[index].km = text;setKmLlegadaList(copy);}}/>
+                    <TextInput  mode="flat" underlineColor="#0d75bb" activeUnderlineColor="#0d75bb" dense textColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }} style={styles.input} value={item.descripcion}onChangeText={(text) => {const copy = [...kmLlegadaList];copy[index].descripcion = text;setKmLlegadaList(copy);}}/> </View>
                   ))}
            </View>
          </View>
