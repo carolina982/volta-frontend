@@ -54,7 +54,7 @@ export default function AdminPage() {
     }
     try {
       if (isAdding) {
-        await api.post("/users", { nombre, apellido, rol, photoUrl });
+        await api.post("/users", { nombre, apellido, rol:rol.trim(), });
         Alert.alert("Éxito", "Usuario creado correctamente");
       } else {
         const changedFields: Partial<User> = {};
@@ -146,7 +146,7 @@ const deleteUser =async (id:string)=>{
               >
                 <Picker.Item label="Admin" value="Admin" />
                 <Picker.Item label="Operador" value="Operador" />
-                <Picker.Item label="Ayudante General " value="Ayudante General " />
+                <Picker.Item label="Ayudante General" value="Ayudante General" />
               </Picker>
             </View>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 10 }}>
