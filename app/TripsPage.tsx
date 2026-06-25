@@ -548,8 +548,10 @@ const agregarKmLlegada = () => {
        <View style={styles.row}>
   {/* SALIDA */}
   <View style={styles.field}>
+    <View style={{flexDirection:"row",justifyContent:"space-between",alignItems:"center"}}>
     <Text style={styles.label}>Kilometraje salida</Text>
-    <Button mode="contained"buttonColor="#167abd"textColor="white"compact onPress={agregarKmSalida}> +</Button>
+    <Button mode="contained"buttonColor="#167abd"textColor="white"compact style={{width:40,height:30}} onPress={agregarKmSalida}> +</Button>
+    </View>
     <View style={{ flexDirection: "row", marginTop: 10 }}>
       <Text style={{ flex: 1, fontWeight: "bold" }}>Km</Text>
       <Text style={{ flex: 2, fontWeight: "bold" }}>Descripción</Text>
@@ -561,11 +563,14 @@ const agregarKmLlegada = () => {
       </View>
     ))}
   </View>
+  
 
   {/* LLEGADA */}
   <View style={styles.field}>
+    <View style={{flexDirection:"row",justifyContent:"space-between",alignItems:"center"}}>
     <Text style={styles.label}>Kilometraje llegada</Text>
-    <Button mode="contained"buttonColor="#167abd"textColor="white"compact onPress={agregarKmLlegada}> +</Button>
+    <Button mode="contained"buttonColor="#167abd"textColor="white"compact style={{width:40,height:30}} onPress={agregarKmLlegada}> +</Button>
+    </View>
     <View style={{ flexDirection: "row", marginTop: 10 }}>
       <Text style={{ flex: 1, fontWeight: "bold" }}>Km</Text>
       <Text style={{ flex: 2, fontWeight: "bold" }}>Descripción</Text>
