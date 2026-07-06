@@ -150,8 +150,13 @@ const deleteUser =async (id:string)=>{
             <Text style={styles.modalTitle}>{isAdding ? "Agregar Usuario" : "Editar Usuario"}</Text>
             <TextInput placeholder="Nombre"placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}value={editingUser?.nombre}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, nombre: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb" />
             <TextInput placeholder="Apellido"placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}value={editingUser?.apellido}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, apellido: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"/>
-            <TextInput placeholder="Correo (obligatorio para Admin)"placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}value={editingUser?.email}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, email: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb" keyboardType="email-address" autoCapitalize="none"/>
+            {editingUser?.rol ==="Admin" && (
+              <>
+              <TextInput placeholder="Correo (obligatorio para Admin)"placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}value={editingUser?.email}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, email: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb" keyboardType="email-address" autoCapitalize="none"/>
             <TextInput placeholder={isAdding ? "Contraseña (obligatoria para Admin)" : "Nueva contraseña (opcional)"}placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}value={editingUser?.password}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, password: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb" secureTextEntry/>
+              </>
+            )}
+
             <TextInput placeholder="Contacto"placeholderTextColor="#000"contentStyle={{ color: "#000", fontWeight: "600" }}style={styles.input}value={editingUser?.contacto}onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, contacto: text })}mode="flat" underlineColor="#0d75bb"activeUnderlineColor="#0d75bb"/>
         
         

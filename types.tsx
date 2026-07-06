@@ -24,6 +24,8 @@ export interface User {
 
  //viatico
 export interface Viatico {
+  estado: string;
+  status: any;
   tripviajeNombre: any;
   tripNombre: any;
   updatedAt: string | number | Date;
@@ -44,6 +46,8 @@ export interface Viatico {
 }
 //viaje 
 export interface Trip{
+    status: any;
+    
     id:string;
     nombre:string;
     conductorId:string;

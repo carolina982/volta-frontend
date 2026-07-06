@@ -11,15 +11,17 @@ import { useStore } from "../context/Store";
 import { api, BASE_URL } from "../services/api";
 import { Viatico } from "../types";
 
-interface Trip { id: string;
-                 nombre: string; 
-                 conductorId: string; 
-                 conductorNombre?: string; 
-                 rutaAcubrir?:string; 
-                 destino?:string};
+interface Trip { 
+  id: string;
+  nombre: string; 
+  conductorId: string; 
+  conductorNombre?: string; 
+  rutaAcubrir?:string; 
+  destino?:string
+};
 
 const conceptosBase = [ "Comidas","Hospedaje", "Taxi","Regaderas",
-  "Pensión","Vulcanizadora","Casetas efectivo","Limpieza Unidad",
+  "Pensión","Vulcanizadora","Casetas efectivo",
   "Multa","Comisiones","Fumigación","DEF"
 ];
 
@@ -60,6 +62,7 @@ export default function ViaticsPage() {
   const [casetaFoto,setCasetaFoto]=useState<string | null>(null);
   const [casetaFotoRemoved,setCasetaFotoRemoved]=useState(false);
 
+   const [viaticosActivos, setViaticosActivos] = useState(0);
   interface CargaDiesel{
     cantidad:string;
     costo:string;
@@ -93,8 +96,10 @@ export default function ViaticsPage() {
 
   useEffect(()=>{const total=dieselHistorial.reduce( (acc, item)=> acc + Number(item.costo || 0),0
   );
+
   setTotalDieselGlobal(total);
   },[dieselHistorial]);
+
   useEffect(()=>{loadTrips(); }, [currentUser]);
 
   
@@ -103,14 +108,20 @@ export default function ViaticsPage() {
     loadTrips();
   }
  },[currentUser]);
+
  useEffect(()=>{
   if (trips.length >0){
     loadViaticos();
   }
+
+ 
+  
  },[trips.filter,conductorFilter]);
+ 
   const loadTrips = async () => {
     try {
       const res = await api.get("/trips");
+      const data=res.data;
       let tripsData = res.data.map((t: any) => ({ 
         ...t,
         id: t._id,
@@ -121,7 +132,10 @@ export default function ViaticsPage() {
         tripsData = tripsData.filter((t: any) => t.conductorId === currentUser.id);
 
       setTrips(tripsData);
+     const activos = viaticos.filter((v: any) => v.status === "activo").length;
+    setViaticosActivos(activos); 
 
+  
     } catch (e) {
       console.error(e);
     }
@@ -613,7 +627,14 @@ const openModal =(viatico?:Viatico)=>{
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Viáticos Registrados</Text>
+       
+            <View style={styles.headerRow}>
+              <Text style={styles.titleMain}>Viaticos Registrados</Text>
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{viaticosActivos} Activos</Text>
+              </View>
+            </View>
+      
       <Button mode="contained" buttonColor="#0d75bb"textColor="rgb(243, 246, 248)" onPress={() => openModal()}>Nuevo Viático</Button>
       {currentUser?.rol !== "Operador" && (
        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10 }}>
@@ -682,6 +703,7 @@ const openModal =(viatico?:Viatico)=>{
           </View>
               ))}
               </View>
+              
           <View style={{ flex: 1, paddingLeft: 3 }}>
              {conceptosBase
              .filter((b)=> b !== "Comidas" && (isAdmin || b !=="Comisiones"))
@@ -769,6 +791,10 @@ const styles = StyleSheet.create({
   container:{flex: 1, padding: 15, backgroundColor: "#f5f5f5" },
   card:{backgroundColor: "#fff", padding: 12, marginBottom: 10, borderRadius: 8 },
   title:{fontSize: 22, fontWeight: "bold" },
+  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  titleMain: { fontSize: 22, fontWeight: "bold", color: "#1e293b" },
+  badge: { backgroundColor: "#1976D2", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  badgeText: { color: "white", fontWeight: "bold", fontSize: 13 },
   modalContent:{flex: 1, padding: 20 },
   modalTitle:{fontSize: 20, fontWeight: "bold", marginBottom: 15 },
   input:{backgroundColor: "#fff", marginBottom: 10 },
@@ -781,5 +807,5 @@ const styles = StyleSheet.create({
   total:{fontSize:16,marginTop:4,marginBottom:10},
   buttonRow:{flexDirection:"row",justifyContent:"space-between",marginTop:10},
   button:{flex:1, marginHorizontal:5},
-
+ 
 });
