@@ -3,8 +3,8 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { Picker } from '@react-native-picker/picker';
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
-import * as XLSX from "xlsx";
 import { Portal, TextInput } from "react-native-paper";
+import * as XLSX from "xlsx";
 import { useStore } from "../context/Store";
 import { api } from "../services/api";
 
@@ -145,7 +145,7 @@ export default function TripsPage() {
     }
   }, []);
 
-  const openModal = useCallback((trip?: Trip) => {
+ const openModal = useCallback((trip?: Trip) => {
     setMostrarHistorialSalida(false);
     setMostrarHistorialLlegada(false);
 
@@ -154,14 +154,23 @@ export default function TripsPage() {
       setRutaAcubrir(trip.rutaAcubrir || "");
       setUnidadId(trip.unidadId || "");
 
-      const cId = typeof trip.conductorId === "object" ? trip.conductorId._id : trip.conductorId;
-      setConductorId(cId || "");
+      // Corregido: Si conductorId es null o undefined, el resultado será ""
+      const cId = trip.conductorId && typeof trip.conductorId === "object" 
+        ? (trip.conductorId as any)?._id || "" 
+        : (trip.conductorId || "");
+      setConductorId(cId);
 
       setFechaSalida(trip.fechaSalida ? new Date(trip.fechaSalida).toLocaleDateString("es-ES") : "");
       setFechaLlegada(trip.fechaLlegada ? new Date(trip.fechaLlegada).toLocaleDateString("es-ES") : "");
       setDestino(trip.destino || "");
       setEstado(trip.estado || "pendiente");
-      setAcompanante(typeof trip.acompanante === "object" ? (trip.acompanante as any)._id : (trip.acompanante || ""));
+
+      // Corregido: Si acompanante es null o undefined, el resultado será ""
+      const aId = trip.acompanante && typeof trip.acompanante === "object"
+        ? (trip.acompanante as any)?._id || ""
+        : (trip.acompanante || "");
+      setAcompanante(aId);
+
       setDef(trip.def || "");
 
       setKmSalidaList(
@@ -218,25 +227,25 @@ const agregarKmSalida = () => {
     setKmLlegadaList([{ km: "", descripcion: "" }, ...kmLlegadaList]);
   };
 
-  const parseDate = (dateStr: string) => {
-    const [day, month, year] = dateStr.split("/");
-    return new Date(Number(year), Number(month) - 1, Number(day), 12, 0, 0);
-  };
+const  parseDate=(dateStr:string)=>{
+  if (!dateStr || dateStr.trim ()=== "") return null;
+  const [day,month,year]=dateStr.split("/");
+  if (!year || !month ||!day) return null;
+  return new Date(Number(year),Number(month)-1,Number(day),12,0,0);
+}
   
 const saveTrip = async () => {
   const estadoCalculado = fechaLlegada && fechaLlegada.trim() !== "" ? "completado" : "pendiente";
 
-  // Validación básica
   if (isAdmin && (!rutaAcubrir || !unidadId || !conductorId || !fechaSalida)) {
     Alert.alert("Falta información", "Ruta, unidad, conductor y fecha de salida son obligatorios.");
     return;
   }
   
-const formatList = (list: KilometrajeRegistro[]) => 
+  const formatList = (list: KilometrajeRegistro[]) => 
     list
       .filter(item => item.km && item.km.trim() !== "")
       .map(item => ({ 
-        // Forzamos a número explícitamente
         numero: Number(item.km), 
         descripcion: item.descripcion ? String(item.descripcion) : "" 
       }));
@@ -253,17 +262,21 @@ const formatList = (list: KilometrajeRegistro[]) =>
     kilometrajeLlegada: formatList(kmLlegadaList)
   };
 
-  // Limpieza extra: Eliminar campos nulos para no enviar claves vacías que puedan molestar a Mongoose
   if (!payload.acompanante) delete payload.acompanante;
   if (!payload.def) payload.def = "";
 
-  if (fechaSalida) payload.fechaSalida = parseDate(fechaSalida).toISOString();
-  if (fechaLlegada) payload.fechaLlegada = fechaLlegada.trim() !== "" ? parseDate(fechaLlegada).toISOString() : null;
+  const salida = parseDate(fechaSalida);
+  if (salida) payload.fechaSalida = salida.toISOString();
+
+  const llegada = parseDate(fechaLlegada);
+  if (llegada) {
+    payload.fechaLlegada = llegada.toISOString();
+  } else {
+    // Esto asegura que no intentemos enviar una fecha inválida
+    delete payload.fechaLlegada;
+  }
 
   try {
-    // Si la fecha de llegada es null, asegúrate de no enviarla si el esquema no la permite
-    if (!payload.fechaLlegada) delete payload.fechaLlegada;
-
     setSaving(true);
     if (editingTrip) {
       await api.put(`/trips/${editingTrip.id}`, payload);
@@ -284,15 +297,30 @@ const formatList = (list: KilometrajeRegistro[]) =>
   
 
 
-  const deleteTrip = async (id: string) => {
-    if (!isAdmin) return;
+const deleteTrip = async(id:string)=>{
+  if (!isAdmin) return;
+  const proceedWinthDelete =async ()=>{
     try {
-      await api.delete(`/trips/${id}`);
-      setTrips((prev) => prev.filter((t) => t.id !== id));
-    } catch (error) {
-      console.error("Error eliminando viaje", error);
+      await api.delete('/trips/${id}');
+      setTrips((prev)=>prev.filter((t)=> t.id !== id));
+      Alert.alert("Exito","Viaje eliminado correctamente");
+    }catch(error){
+      console.error("Error eliminando viaje",error);
+      Alert.alert("Error ","No se pudo eliminar el viaje");
     }
   };
+  if (Platform.OS === "web"){
+    const confirmed =window.confirm("Estas seguro de que deseas eliminar este viaje");
+    if (confirmed) proceedWinthDelete();
+  }else{
+    Alert.alert("Confirmar eliminacion ","¿Estas seguro de que deseas eliminar este viaje?",
+      [
+        {text:"Cancelar",style:"cancel"},
+        {text:"Eliminar",style:"destructive",onPress:proceedWinthDelete}
+      ]
+    );
+  }
+};
 
   const exportToExcel = async () => {
     if (trips.length === 0) {
@@ -465,22 +493,23 @@ const formatList = (list: KilometrajeRegistro[]) =>
           </View>
           {list.map((item, index) => (
             <View key={index} style={styles.kmRow}>
-              <View style={styles.kmInputHalf}>
-                <Text style={styles.kmInputLabel}>KM</Text>
-                <TextInput
-                  placeholder="0"
-                  keyboardType="numeric"
-                  value={item.km}
-                  onChangeText={(text) => setList((prev) => prev.map((it, i) => (i === index ? { ...it, km: text } : it)))}
-                  {...modalInputProps}
-                />
-              </View>
+             
               <View style={styles.kmInputWide}>
                 <Text style={styles.kmInputLabel}>Detalle</Text>
                 <TextInput
                   placeholder="Descripción"
                   value={item.descripcion}
                   onChangeText={(text) => setList((prev) => prev.map((it, i) => (i === index ? { ...it, descripcion: text } : it)))}
+                  {...modalInputProps}
+                />
+              </View>
+               <View style={styles.kmInputHalf}>
+                <Text style={styles.kmInputLabel}>KM</Text>
+                <TextInput
+                  placeholder="0"
+                  keyboardType="numeric"
+                  value={item.km}
+                  onChangeText={(text) => setList((prev) => prev.map((it, i) => (i === index ? { ...it, km: text } : it)))}
                   {...modalInputProps}
                 />
               </View>
@@ -503,7 +532,7 @@ const formatList = (list: KilometrajeRegistro[]) =>
       Platform.OS === "web" ? (
         <input
           type="date"
-          value={value ? new Date(parseDate(value)).toISOString().split("T")[0] : ""}
+         value ={value && parseDate(value)  ? new Date(parseDate(value) as Date).toISOString().split("T")[0]:""}
           onChange={(e) => {
             if (!e.target.value) return;
             const [year, month, day] = e.target.value.split("-");
@@ -809,406 +838,117 @@ const formatList = (list: KilometrajeRegistro[]) =>
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    paddingVertical: 4,
-    backgroundColor: "transparent",
-  },
-  pageHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    marginBottom: 16,
-  },
+  container: { flex: 1,paddingVertical: 4,backgroundColor: "transparent",},
+  pageHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16,},
   pageHeaderText: { flex: 1, paddingRight: 12 },
   pageTitle: { fontSize: 24, fontWeight: "800", color: "#111111", letterSpacing: 0.2 },
   subtitle: { fontSize: 13, color: "#6b7280", marginTop: 4 },
-  toolbarPanel: {
-    backgroundColor: "#ffffff",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 14,
-    marginBottom: 14,
-    gap: 12,
-    ...(Platform.OS === "web"
-      ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any }
-      : {}),
-  },
+  toolbarPanel: {backgroundColor: "#ffffff",borderRadius: 14,borderWidth: 1,borderColor: "#e5e7eb",padding: 14,marginBottom: 14,gap: 12,...(Platform.OS === "web"  ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any } : {}),},
   toolbarActions: { flexDirection: "row", alignItems: "center" },
-  toolbarFiltersRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#f3f4f6",
-  },
+  toolbarFiltersRow: {flexDirection: "row",alignItems: "flex-end",justifyContent: "space-between",gap: 12,paddingTop: 12,borderTopWidth: 1,borderTopColor: "#f3f4f6", },
   toolbarFiltersRowMobile: { flexDirection: "column", alignItems: "stretch" },
   filterBlock: { flex: 1, minWidth: 0 },
-  toolbarLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#9ca3af",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 8,
-  },
-  segmentedControl: {
-    flexDirection: "row",
-    alignSelf: "flex-start",
-    backgroundColor: "#f3f4f6",
-    borderRadius: 999,
-    padding: 4,
-    gap: 4,
-  },
-  filterPill: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
+  toolbarLabel: {fontSize: 11, fontWeight: "700",color: "#9ca3af",textTransform: "uppercase",letterSpacing: 0.5,marginBottom: 8,},
+  segmentedControl: {flexDirection: "row",alignSelf: "flex-start",backgroundColor: "#f3f4f6",borderRadius: 999,padding: 4,gap: 4,},
+  filterPill: {paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999, ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
   filterPillActive: { backgroundColor: "#111111" },
   filterPillText: { fontSize: 12, fontWeight: "700", color: "#6b7280" },
   filterPillTextActive: { color: "#ffffff" },
-  addButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: "#111111",
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 999,
+  addButton: {flexDirection: "row",alignItems: "center",justifyContent: "center",gap: 8,backgroundColor: "#111111",paddingVertical: 12,paddingHorizontal: 18,borderRadius: 999,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const, alignSelf: "flex-start" as const } : {}),
   },
-  addButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
-  exportButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    borderWidth: 1.5,
-    borderColor: "#111111",
-    backgroundColor: "#ffffff",
-    flexShrink: 0,
+  addButtonText:{color: "#ffffff", fontWeight: "700", fontSize: 14 },
+  exportButton:{flexDirection: "row",alignItems: "center",gap: 8,paddingVertical: 10,paddingHorizontal: 16, borderRadius: 999,borderWidth: 1.5,borderColor: "#111111",backgroundColor: "#ffffff",flexShrink: 0,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   exportButtonText: { color: "#111111", fontWeight: "700", fontSize: 13 },
-  listPanel: {
-    backgroundColor: "#ffffff",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 14,
-    flex: 1,
+  listPanel: { backgroundColor: "#ffffff", borderRadius: 14, borderWidth: 1, borderColor: "#e5e7eb", padding: 14, flex: 1,
     ...(Platform.OS === "web"
       ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any }
       : {}),
   },
-  listHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingBottom: 12,
-    marginBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f3f4f6",
-  },
+  listHeader: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",paddingBottom: 12,marginBottom: 12,borderBottomWidth: 1,borderBottomColor: "#f3f4f6", },
   listHeaderTitle: { fontSize: 14, fontWeight: "700", color: "#111111" },
   listHeaderHint: { fontSize: 12, color: "#9ca3af", fontWeight: "600" },
   listContent: { paddingBottom: 8, gap: 12 },
   listRow: { gap: 12 },
-  emptyState: {
-    paddingVertical: 48,
-    paddingHorizontal: 20,
-    alignItems: "center",
-    gap: 8,
-  },
+  emptyState: { paddingVertical: 48,paddingHorizontal: 20,alignItems: "center",gap: 8,},
   emptyTitle: { fontSize: 16, fontWeight: "700", color: "#111111" },
   emptyText: { fontSize: 14, color: "#64748b", textAlign: "center" },
-  retryButton: {
-    marginTop: 8,
-    backgroundColor: "#111111",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 999,
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
+  retryButton: {marginTop: 8,backgroundColor: "#111111",paddingHorizontal: 16,paddingVertical: 10,borderRadius: 999,   ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}), },
   retryButtonText: { color: "#fff", fontWeight: "700" },
-  card: {
-    flexDirection: "row",
-    backgroundColor: "#fafafa",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 14,
-    flex: 1,
-    gap: 12,
-  },
+  card: { flexDirection: "row",backgroundColor: "#fafafa",borderRadius: 14,borderWidth: 1,borderColor: "#e5e7eb",padding: 14,flex: 1,gap: 12, },
   cardMobile: { width: "100%" },
   cardDesktop: { minWidth: 0, maxWidth: "49%" as any },
-  cardIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  cardIconWrap: {width: 44,height: 44,borderRadius: 12,backgroundColor: "#ffffff",borderWidth: 1,borderColor: "#e5e7eb",alignItems: "center",justifyContent: "center",},
   cardBody: { flex: 1, minWidth: 0 },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-    marginBottom: 10,
-  },
+  cardHeader: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",gap: 8,marginBottom: 10,},
   cardTitle: { fontSize: 15, fontWeight: "800", color: "#111111", flex: 1 },
-  estadoBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-  },
+  estadoBadge: {flexDirection: "row",alignItems: "center",gap: 5,paddingHorizontal: 10,paddingVertical: 5,borderRadius: 999, },
   estadoPendiente: { backgroundColor: "#fffbeb", borderWidth: 1, borderColor: "#fde68a" },
   estadoCompletado: { backgroundColor: "#ecfdf5", borderWidth: 1, borderColor: "#a7f3d0" },
   estadoText: { fontSize: 11, fontWeight: "700" },
   estadoTextPendiente: { color: "#d97706" },
   estadoTextCompletado: { color: "#059669" },
   specGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
-  specItem: {
-    minWidth: "46%",
-    flexGrow: 1,
-    backgroundColor: "#ffffff",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  specLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#9ca3af",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
+  specItem: {minWidth: "46%",flexGrow: 1,backgroundColor: "#ffffff",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",paddingHorizontal: 10,paddingVertical: 8,},
+  specLabel: {fontSize: 10,fontWeight: "700",color: "#9ca3af",textTransform: "uppercase",letterSpacing: 0.4,},
   specValue: { fontSize: 13, fontWeight: "600", color: "#111111", marginTop: 2 },
   cardActions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
-  iconAction: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    alignItems: "center",
-    justifyContent: "center",
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
+  iconAction: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e5e7eb", alignItems: "center", justifyContent: "center", ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
   iconActionDanger: { backgroundColor: "#fef2f2", borderColor: "#fecaca" },
-  webModalOverlay: {
-    position: "fixed" as any,
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 9999,
-    padding: 20,
-    ...(Platform.OS === "web" ? { cursor: "default" as const } : {}),
+  webModalOverlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0,backgroundColor: "rgba(0,0,0,0.5)",justifyContent: "center",alignItems: "center",zIndex: 9999,padding: 20,
+  ...(Platform.OS === "web" ? { cursor: "default" } : {}),
+} as any, 
+  modalContainer: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)", padding: 16,
   },
-  modalContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.5)",
-    padding: 16,
-  },
-  modalCard: {
-    width: Platform.OS === "web" ? 720 : "96%",
-    maxHeight: Platform.OS === "web" ? ("90vh" as any) : "92%",
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
+  modalCard: {width: Platform.OS === "web" ? 720 : "96%",maxHeight: Platform.OS === "web" ? ("90vh" as any) : "92%",backgroundColor: "#ffffff", borderRadius: 16, overflow: "hidden", borderWidth: 1,borderColor: "#e5e7eb",
     ...(Platform.OS === "web"
       ? { boxShadow: "0 20px 50px rgba(0,0,0,0.18)" as any }
       : {}),
   },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    paddingHorizontal: 22,
-    paddingTop: 22,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f3f4f6",
+  modalHeader:{flexDirection: "row",alignItems: "flex-start",justifyContent: "space-between",paddingHorizontal: 22,paddingTop: 22,paddingBottom: 16,borderBottomWidth: 1,borderBottomColor: "#f3f4f6",},
+  modalHeaderLeft:{flexDirection: "row",alignItems: "center",gap: 12,flex: 1,paddingRight: 12,},
+  modalIconBadge:{width: 40,height: 40,borderRadius: 20,backgroundColor: "#111111",alignItems: "center",justifyContent: "center",},
+  modalTitle:{fontSize: 18, fontWeight: "800", color: "#111111" },
+  modalSubtitle:{fontSize: 12, color: "#6b7280", marginTop: 2 },
+  modalCloseButton:{width: 32,height: 32,borderRadius: 16,backgroundColor: "#f3f4f6",alignItems: "center", justifyContent: "center", ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
-  modalHeaderLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    flex: 1,
-    paddingRight: 12,
-  },
-  modalIconBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#111111",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  modalTitle: { fontSize: 18, fontWeight: "800", color: "#111111" },
-  modalSubtitle: { fontSize: 12, color: "#6b7280", marginTop: 2 },
-  modalCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#f3f4f6",
-    alignItems: "center",
-    justifyContent: "center",
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
-  modalBodyWrap: { flexShrink: 1 },
-  modalScroll: { flexGrow: 0, flexShrink: 1 },
-  modalScrollContent: { paddingHorizontal: 22, paddingTop: 18, paddingBottom: 24 },
-  modalFieldGroup: { marginBottom: 14 },
-  modalFieldLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#374151",
-    marginBottom: 6,
-    letterSpacing: 0.2,
-  },
+  modalBodyWrap:{flexShrink: 1 },
+  modalScroll:{flexGrow: 0, flexShrink: 1 },
+  modalScrollContent:{paddingHorizontal: 22, paddingTop: 18, paddingBottom: 24 },
+  modalFieldGroup:{marginBottom: 14 },
+  modalFieldLabel:{fontSize: 12,fontWeight: "700",color: "#374151",marginBottom: 6,letterSpacing: 0.2, },
   modalFieldRow: { flexDirection: "row", gap: 12 },
   modalFieldHalf: { flex: 1, minWidth: 0 },
-  modalInput: {
-    width: "100%",
-    height: 42,
-    backgroundColor: "#fafafa",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
+  modalInput: {width: "100%",height: 42,backgroundColor: "#fafafa",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",},
   modalInputContent: { color: "#111111", fontWeight: "600", fontSize: 14 },
-  pickerWrap: {
-    backgroundColor: "#fafafa",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    overflow: "hidden",
-  },
+  pickerWrap: { backgroundColor: "#fafafa", borderRadius: 10, borderWidth: 1, borderColor: "#e5e7eb", overflow: "hidden",},
   picker: { width: "100%", color: "#111111" },
-  modalSectionTitle: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#111111",
-    marginBottom: 10,
-    marginTop: 4,
-    letterSpacing: 0.2,
-  },
+  modalSectionTitle: { fontSize: 13, fontWeight: "800", color: "#111111", marginBottom: 10, marginTop: 4, letterSpacing: 0.2,},
   kmGrid: { flexDirection: "row", gap: 12, marginBottom: 14 },
-  kmSection: {
-    flex: 1,
-    backgroundColor: "#fafafa",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    overflow: "hidden",
-  },
-  kmHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
+  kmSection: { flex: 1, backgroundColor: "#fafafa", borderRadius: 12, borderWidth: 1, borderColor: "#e5e7eb", overflow: "hidden", },
+  kmHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 12,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
   kmHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
   kmHeaderTitle: { fontSize: 12, fontWeight: "700", color: "#111111" },
   kmBody: { paddingHorizontal: 12, paddingBottom: 12, borderTopWidth: 1, borderTopColor: "#e5e7eb" },
-  kmBodyHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 10,
-    marginBottom: 8,
-  },
+  kmBodyHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10, marginBottom: 8, },
   kmBodyLabel: { fontSize: 10, fontWeight: "700", color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.4 },
-  addKmBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: "#111111",
-    alignItems: "center",
-    justifyContent: "center",
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
+  addKmBtn: {width: 24,height: 24,borderRadius: 12,backgroundColor: "#111111",alignItems: "center",justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
   kmRow: { flexDirection: "row", gap: 8, marginBottom: 8 },
-  kmInputHalf: { flex: 1 },
-  kmInputWide: { flex: 1.5 },
-  kmInputLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#9ca3af",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-    marginBottom: 4,
+  kmInputHalf:{flex: 1 },
+  kmInputWide: {flex: 1.5 },
+  kmInputLabel: {fontSize: 10,fontWeight: "700",color: "#9ca3af",textTransform: "uppercase",letterSpacing: 0.4,  marginBottom: 4,},
+  webDatePicker: { padding: 10, borderRadius: 10, marginBottom: 0,borderWidth: 1,borderColor: "#e5e7eb",backgroundColor: "#fafafa",width: "100%",fontSize: 14,fontWeight: "600",color: "#111111",},
+  modalActions: { flexDirection: "row", justifyContent: "space-between", gap: 12, paddingHorizontal: 22, paddingTop: 14,paddingBottom: 22,borderTopWidth: 1,borderTopColor: "#f3f4f6",
   },
-  webDatePicker: {
-    padding: 10,
-    borderRadius: 10,
-    marginBottom: 0,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    backgroundColor: "#fafafa",
-    width: "100%",
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111111",
-  },
-  modalActions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingHorizontal: 22,
-    paddingTop: 14,
-    paddingBottom: 22,
-    borderTopWidth: 1,
-    borderTopColor: "#f3f4f6",
-  },
-  cancelButton: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-    borderRadius: 999,
-    paddingVertical: 13,
-    alignItems: "center",
-    borderWidth: 1.5,
-    borderColor: "#111111",
+  cancelButton: {flex: 1,backgroundColor: "#ffffff",borderRadius: 999,paddingVertical: 13,alignItems: "center",borderWidth: 1.5,borderColor: "#111111",
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   cancelButtonText: { color: "#111111", fontWeight: "700", fontSize: 14 },
-  saveButton: {
-    flex: 1,
-    backgroundColor: "#111111",
-    borderRadius: 999,
-    paddingVertical: 13,
-    alignItems: "center",
-    justifyContent: "center",
+  saveButton: {flex: 1,backgroundColor: "#111111",borderRadius: 999,paddingVertical: 13,alignItems: "center",justifyContent: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   saveButtonDisabled: { opacity: 0.6 },

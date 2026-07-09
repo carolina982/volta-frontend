@@ -318,26 +318,9 @@ const styles = StyleSheet.create({
   role: { fontSize: 13, color: "#38bdf8", marginTop: 2, fontWeight: "500" },
   divider: { backgroundColor: "rgba(148, 163, 184, 0.2)", marginVertical: 15 },
   
-  sideTab:{flexDirection: "row", alignItems: "center",justifyContent: "space-between", // Empuja los Badges al extremo derecho
-    padding: 14, 
-    marginVertical: 4,
-    borderRadius: 8,
-    position: "relative",
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  menuItemLeftSection: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  activeIndicatorLine: {
-    position: "absolute",
-    left: 0,
-    top: "30%",
-    height: "40%",
-    width: 4,
-    backgroundColor: "#007bff",
-    borderRadius: 2
-  },
+  sideTab:{flexDirection: "row", alignItems: "center",justifyContent: "space-between",padding: 14, marginVertical: 4,borderRadius: 8,position: "relative",...(Platform.OS === "web" ? { cursor: "pointer" } : {}),},
+  menuItemLeftSection: { flexDirection: "row",alignItems: "center",},
+  activeIndicatorLine: {position: "absolute",left: 0,top: "30%",height: "40%",width: 4,backgroundColor: "#007bff",borderRadius: 2 },
   sideTabActive: { backgroundColor: "rgba(0, 123, 255, 0.15)" },
   menuIcon: { width: 25, textAlign: "center" },
   tabText: { fontSize: 15, color: "#cbd5e1", marginLeft: 5 },
@@ -366,15 +349,7 @@ const styles = StyleSheet.create({
   drawerAvatarContainer: { flexDirection: "row", alignItems: "center", marginTop: 10 },
   overlayBackground: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)" },
   
-  drawerItem: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    justifyContent: "space-between",
-    paddingVertical: 12, 
-    paddingHorizontal: 12, 
-    borderRadius: 8, 
-    marginVertical: 4 
-  },
+  drawerItem: {flexDirection: "row", alignItems: "center", justifyContent: "space-between",paddingVertical: 12, paddingHorizontal: 12, borderRadius: 8, marginVertical: 4 },
   drawerItemActive: { backgroundColor: "#007bff" },
   drawerText: { fontSize: 15, color: "#334155", marginLeft: 5 },
   drawerName: { fontSize: 16, fontWeight: "bold", color: "#1e293b" },
