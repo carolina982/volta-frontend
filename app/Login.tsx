@@ -1,8 +1,7 @@
-import { FontAwesome5 } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { TextInput } from "react-native-paper";
 import { useStore } from "../context/Store";
 
@@ -18,17 +17,22 @@ export default function Login() {
   const [passwordError, setPasswordError] = useState("");
   const [generalError, setGeneralError] = useState("");
 
-  // ---  CAPTCHA DE PALOMITA ---
-  const [isCaptchaChecked, setIsCaptchaChecked] = useState(false);
-  const [isCaptchaVerifying, setIsCaptchaVerifying] = useState(false);
-  const [captchaError, setCaptchaError] = useState("");
-
   // --- ESTADOS PARA FLUJO DE 2FA  ---
   const [isTwoFactorRequired, setIsTwoFactorRequired] = useState(false);
   const [twoFactorCode, setTwoFactorCode] = useState("");
   const [twoFactorError, setTwoFactorError] = useState("");
 
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const [isMounted, setIsMounted] = useState(false);
+  const isLargeScreen = isMounted && width >= 768;
+  const webFont = Platform.OS === "web"
+    ? { fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' as const }
+    : {};
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // CORREGIDO: Bloque seguro para evitar la pantalla roja 'Native module is null' en iOS
   useEffect(() => {
@@ -58,16 +62,6 @@ export default function Login() {
     loadRememberedEmail();
   }, []);
 
-  const handleCheckCaptcha = () => {
-    if (isCaptchaChecked) return;
-    setIsCaptchaVerifying(true);
-    setCaptchaError("");
-    setTimeout(() => {
-      setIsCaptchaVerifying(false);
-      setIsCaptchaChecked(true);
-    }, 1200);
-  };
-
   const validateEmail = (text: string) => {
     const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return regex.test(text);
@@ -76,7 +70,6 @@ export default function Login() {
   const handledLogin = async () => {
     setEmailError("");
     setPasswordError("");
-    setCaptchaError("");
     setGeneralError("");
     setTwoFactorError("");
 
@@ -95,11 +88,6 @@ export default function Login() {
       hasError = true;
     } else if (password.length < 6) {
       setPasswordError("La contraseña debe tener al menos 6 caracteres.");
-      hasError = true;
-    }
-
-    if (!isCaptchaChecked) {
-      setCaptchaError("Por favor confirma que no eres un robot.");
       hasError = true;
     }
 
@@ -148,7 +136,6 @@ export default function Login() {
 
       if (response.status === 403 && data.requiresVerification) {
         setGeneralError("Tu cuenta de correo electrónico no ha sido verificada. Por favor revisa tu bandeja de entrada.");
-        setIsCaptchaChecked(false);
         return;
       }
 
@@ -160,7 +147,6 @@ export default function Login() {
 
       if (!response.ok) {
         setGeneralError(data.message || "Ocurrió un problema al iniciar sesión.");
-        setIsCaptchaChecked(false);
         return;
       }
 
@@ -196,148 +182,133 @@ export default function Login() {
       router.replace("/Dashboard");
     } catch (error) {
       setGeneralError("No se pudo conectar con el servidor. Inténtalo más tarde.");
-      setIsCaptchaChecked(false);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
-        <View style={styles.container}>
-          
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <View style={[styles.container, isLargeScreen && styles.containerDesktop]}>
+          <View style={[styles.card, isLargeScreen ? styles.cardDesktop : styles.cardMobile]}>
+
           {loading && (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="large" color="#ffffff" />
-              <Text style={styles.loadingText}>Iniciando sesión de forma segura...</Text>
+              <Text style={styles.loadingText}>Iniciando sesión...</Text>
             </View>
           )}
 
-          <FontAwesome5 name="truck-moving" size={85.5} color="#007bff" style={styles.icon} />
-          <Text style={styles.title}>Volta</Text>
+          <View style={styles.brandRow}>
+            <Image
+              source={require("../assets/images/logo-volta.jpeg")}
+              style={styles.logoImage}
+              resizeMode="contain"
+            />
+          </View>
 
           {!isTwoFactorRequired ? (
             <>
-              {/* Input de Correo */}
-              <TextInput 
-                placeholder="Correo electrónico"
-                value={email}
+              <TextInput placeholder="Correo electrónico"placeholderTextColor="#9ca3af"value={email}
                 onChangeText={(text) => { setEmail(text); setEmailError(""); }}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 mode="flat"
-                underlineColor={emailError ? "#ff3333" : "#0d75bb"} 
-                activeUnderlineColor={emailError ? "#ff3333" : "#0d75bb"}
-                dense 
-                contentStyle={{ color: "#000", fontWeight: "600" }}  
+                underlineColor={emailError ? "#dc2626" : "#d1d5db"}
+                activeUnderlineColor={emailError ? "#dc2626" : "#111111"}
+                dense
+                contentStyle={[styles.inputContent, webFont]}
                 style={styles.input}
               />
               {emailError ? <Text style={styles.errorText}>{emailError}</Text> : null}
 
-              {/* Input de Contraseña */}
-              <TextInput 
+              <TextInput
                 placeholder="Contraseña"
+                placeholderTextColor="#9ca3af"
                 value={password}
                 onChangeText={(text) => { setPassword(text); setPasswordError(""); }}
                 secureTextEntry={!showPassword}
                 mode="flat"
-                underlineColor={passwordError ? "#ff3333" : "#0d75bb"}
-                activeUnderlineColor={passwordError ? "#ff3333" : "#0d75bb"}
-                dense 
-                contentStyle={{ color: "#000", fontWeight: "600" }}
-                style={styles.input} 
+                underlineColor={passwordError ? "#dc2626" : "#d1d5db"}
+                activeUnderlineColor={passwordError ? "#dc2626" : "#111111"}
+                dense
+                contentStyle={[styles.inputContent, webFont]}
+                style={styles.input}
                 right={
-                  <TextInput.Icon 
-                    icon={showPassword ? "eye-off" : "eye"} 
-                    color="#007bff" 
-                    onPress={() => setShowPassword(!showPassword)} 
+                  <TextInput.Icon
+                    icon={showPassword ? "eye-off" : "eye"}
+                    color="#111111"
+                    onPress={() => setShowPassword(!showPassword)}
                   />
                 }
               />
               {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
 
-              {/* Fila Recordarme */}
               <View style={styles.rememberMeContainer}>
-                <Text style={styles.rememberMeText}>Recordar mi correo electrónico</Text>
+                <Text style={[styles.rememberMeText, webFont]}>Recordar mi correo</Text>
                 <Switch
                   value={rememberMe}
                   onValueChange={setRememberMe}
-                  trackColor={{ false: "#767577", true: "#a5d1f3" }}
-                  thumbColor={rememberMe ? "#0d75bb" : "#f4f3f4"}
+                  trackColor={{ false: "#e5e7eb", true: "#9ca3af" }}
+                  thumbColor={rememberMe ? "#111111" : "#f9fafb"}
                 />
               </View>
             </>
           ) : (
             <>
-              {/* Input exclusivo para Código 2FA */}
-              <Text style={styles.twoFactorTitle}>Código de Autenticación de Dos Factores</Text>
-              <TextInput 
-                placeholder="Ingresa el código de 6 dígitos"
+              <Text style={styles.twoFactorTitle}>Código de verificación 2FA</Text>
+              <TextInput
+                placeholder="Código de 6 dígitos"
+                placeholderTextColor="#9ca3af"
                 value={twoFactorCode}
                 onChangeText={(text) => { setTwoFactorCode(text); setTwoFactorError(""); }}
                 keyboardType="number-pad"
                 maxLength={6}
                 mode="flat"
-                underlineColor={twoFactorError ? "#ff3333" : "#0d75bb"}
-                activeUnderlineColor={twoFactorError ? "#ff3333" : "#0d75bb"}
+                underlineColor={twoFactorError ? "#dc2626" : "#d1d5db"}
+                activeUnderlineColor={twoFactorError ? "#dc2626" : "#111111"}
                 dense
-                contentStyle={{ color: "#000", fontWeight: "600", textAlign: "center" }}
+                contentStyle={[styles.inputContent, webFont, { textAlign: "center" }]}
                 style={styles.input}
               />
               {twoFactorError ? <Text style={styles.errorText}>{twoFactorError}</Text> : null}
-              
-              <TouchableOpacity onPress={() => setIsTwoFactorRequired(false)} style={{ marginTop: 10 }}>
-                <Text style={{ color: "#64748b", textDecorationLine: "underline" }}>Regresar al formulario principal</Text>
+
+              <TouchableOpacity onPress={() => setIsTwoFactorRequired(false)} style={styles.backLink}>
+                <Text style={styles.linkMuted}>Regresar al formulario principal</Text>
               </TouchableOpacity>
             </>
           )}
 
-          {/* CAPTCHA de Palomita Interactiva */}
-          <View style={styles.captchaWrapper}>
-            <TouchableOpacity 
-              style={[styles.captchaBox, isCaptchaChecked && styles.captchaBoxChecked]} 
-              onPress={handleCheckCaptcha}
-              activeOpacity={0.7}
-              disabled={isCaptchaVerifying || isCaptchaChecked}
-            >
-              <View style={[styles.checkboxSquare, isCaptchaChecked && styles.checkboxSquareChecked]}>
-                {isCaptchaVerifying && <ActivityIndicator size="small" color="#007bff" />}
-                {isCaptchaChecked && <FontAwesome5 name="check" size={14} color="#22c55e" />}
-              </View>
-              <Text style={styles.captchaLabel}>No soy un robot</Text>
-              
-              <View style={styles.recaptchaLogoContainer}>
-                <FontAwesome5 name="recycle" size={16} color="#007bff" />
-                <Text style={styles.recaptchaLogoText}>reCAPTCHA</Text>
-              </View>
-            </TouchableOpacity>
-            {captchaError ? <Text style={styles.errorText}>{captchaError}</Text> : null}
-          </View>
-
           {generalError ? <Text style={styles.generalErrorText}>{generalError}</Text> : null}
 
-          <TouchableOpacity 
-            style={[styles.button, loading && { opacity: 0.5 }]} 
-            onPress={handledLogin} 
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={handledLogin}
             disabled={loading}
+            activeOpacity={0.85}
           >
-            <Text style={styles.buttonText}>
+            <Text style={[styles.buttonText, webFont]}>
               {isTwoFactorRequired ? "Verificar y Entrar" : "Iniciar Sesión"}
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => router.push("/ForgotPassword")}>
-            <Text style={{ color: "#007bff", marginTop: 15 }}>
-              ¿Olvidaste tu contraseña?
-            </Text>
+          <TouchableOpacity onPress={() => router.push("/ForgotPassword")} style={styles.forgotLink}>
+            <Text style={styles.forgotLinkText}>¿Olvidaste tu contraseña?</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.registerButton} onPress={() => router.push("/Register")}>
-            <Text style={styles.registerText}>
-              ¿No tienes cuenta? Regístrate
-            </Text>
-          </TouchableOpacity>
+          <View style={[styles.registerBox, !isLargeScreen && styles.registerBoxMobile]}>
+            <Text style={[styles.registerHint, webFont]}>¿No tienes cuenta?</Text>
+            <TouchableOpacity
+              style={styles.registerButton}
+              onPress={() => router.push("/Register")}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.registerButtonText, webFont]}>Regístrate</Text>
+            </TouchableOpacity>
+          </View>
+
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -345,29 +316,115 @@ export default function Login() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 20, backgroundColor: "#f5f7fa" },
-  icon: { marginBottom: 20 },
-  title: { fontSize: 28, marginBottom: 30, fontWeight: "bold" },
-  input: { width: "100%", height: 50, backgroundColor: "transparent", marginTop: 5 },
-  errorText: { width: "100%", color: "#ff3333", fontSize: 13, marginTop: 4, alignSelf: "flex-start", paddingLeft: 5 },
-  generalErrorText: { color: "#ff3333", fontSize: 15, fontWeight: "bold", marginTop: 10, textAlign: "center" },
-  button: { width: "100%", height: 50, backgroundColor: "#007bff", borderRadius: 10, justifyContent: "center", alignItems: "center", marginTop: 15 },
-  buttonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
-  registerButton: { marginTop: 20 },
-  registerText: { color: "#007bff", fontSize: 16 },
-  rememberMeContainer: { flexDirection: "row",alignItems: "center",justifyContent: "space-between",width: "100%",marginTop: 15,marginBottom: 10,paddingHorizontal: 5},
-  rememberMeText: { fontSize: 14, color: "#475569", fontWeight: "500" },
-  twoFactorTitle: { fontSize: 15, fontWeight: "600", color: "#1e293b", marginTop: 10, textAlign: "center", width: "100%" },
-
-  // ESTILOS CAPTCHA
-  captchaWrapper: { width: "100%", marginTop: 10, marginBottom: 5 },
-  captchaBox: { width: "100%", height: 64,backgroundColor: "#f8fafc", borderRadius: 6, borderWidth: 1.5, borderColor: "#cbd5e1", flexDirection: "row", alignItems: "center", paddingHorizontal: 15,justifyContent: "space-between", },
-  captchaBoxChecked: { borderColor: "#e2e8f0", backgroundColor: "#f1f5f9" },
-  checkboxSquare: { width: 26,height: 26,borderWidth: 2,borderColor: "#94a3b8",borderRadius: 4,backgroundColor: "#fff",justifyContent: "center",alignItems: "center", },
-  checkboxSquareChecked: { borderColor: "#22c55e" },
-  captchaLabel: { flex: 1, fontSize: 15, color: "#334155", fontWeight: "600", marginLeft: 14 },
-  recaptchaLogoContainer: { alignItems: "center", justifyContent: "center" },
-  recaptchaLogoText: { fontSize: 9, color: "#64748b", fontWeight: "700", marginTop: 2 },
-  loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(15, 23, 42, 0.75)", zIndex: 999, justifyContent: "center", alignItems: "center",},
-  loadingText: { marginTop: 14, color: "#ffffff", fontWeight: "700", fontSize: 16 }
+  screen:{flex: 1,backgroundColor: "#f3f4f6",...(Platform.OS === "web" ? { minHeight: "100vh" as any } : {}), },
+  scrollContent:{flexGrow: 1,width: "100%",...(Platform.OS === "web" ? { minHeight: "100vh" as any } : {}), },
+  container:{flex: 1,width: "100%",justifyContent: "center",alignItems: "center",paddingHorizontal: 20,paddingVertical: 24,backgroundColor: "#ffffff",...(Platform.OS === "web" ? { minHeight: "100vh" as any } : {}),},
+  containerDesktop: {
+    backgroundColor: "#f3f4f6",
+    paddingHorizontal: 32,
+    paddingVertical: 48,
+  },
+  card: {
+    width: "100%",
+    maxWidth: 420,
+    alignSelf: "center",
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 20,
+    paddingVertical: 28,
+    position: "relative",
+  },
+  cardMobile: {
+    borderWidth: 0,
+    borderRadius: 0,
+    maxWidth: "100%",
+    paddingHorizontal: 0,
+    paddingVertical: 8,
+    ...(Platform.OS === "web" ? { boxShadow: "none" as any } : {}),
+  },
+  cardDesktop: {
+    width: "100%",
+    maxWidth: 480,
+    alignSelf: "center",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 40,
+    paddingVertical: 44,
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 12px 40px rgba(0,0,0,0.08)" as any }
+      : {}),
+  },
+  brandRow: { alignItems: "center", marginBottom: 28 },
+  logoImage: {
+    width: 240,
+    height: 90,
+    maxWidth: "100%",
+  },
+  input: { width: "100%", height: 48, backgroundColor: "transparent", marginTop: 4 },
+  inputContent: { color: "#111111", fontWeight: "600", fontSize: 15 },
+  errorText: { width: "100%", color: "#dc2626", fontSize: 12, marginTop: 4, alignSelf: "flex-start" },
+  generalErrorText: { color: "#dc2626", fontSize: 14, fontWeight: "600", marginTop: 10, textAlign: "center" },
+  button: {
+    width: "100%",
+    height: 50,
+    backgroundColor: "#111111",
+    borderRadius: 999,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 16,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  buttonDisabled: { opacity: 0.5 },
+  buttonText: { color: "#ffffff", fontSize: 16, fontWeight: "700", letterSpacing: 0.3 },
+  forgotLink: { marginTop: 16, alignSelf: "center" },
+  forgotLinkText: { color: "#6b7280", fontSize: 13, fontWeight: "500", textDecorationLine: "underline" },
+  registerBox: {
+    width: "100%",
+    marginTop: 20,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  registerBoxMobile: {
+    borderTopWidth: 0,
+    paddingTop: 16,
+    marginTop: 16,
+  },
+  registerHint: { color: "#6b7280", fontSize: 14, fontWeight: "500" },
+  registerButton: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: "#111111",
+    backgroundColor: "#ffffff",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  registerButtonText: { color: "#111111", fontSize: 14, fontWeight: "700", letterSpacing: 0.2 },
+  linkMuted: { color: "#6b7280", fontSize: 13, textDecorationLine: "underline" },
+  backLink: { marginTop: 10, alignSelf: "center" },
+  rememberMeContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  rememberMeText: { fontSize: 13, color: "#374151", fontWeight: "500", flex: 1, marginRight: 8 },
+  twoFactorTitle: { fontSize: 15, fontWeight: "700", color: "#111111", marginTop: 8, textAlign: "center", width: "100%" },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.72)",
+    zIndex: 999,
+    justifyContent: "center",
+    alignItems: "center",
+    borderRadius: 16,
+  },
+  loadingText: { marginTop: 14, color: "#ffffff", fontWeight: "600", fontSize: 15 },
 });

@@ -1,11 +1,12 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
-import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { Image, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { Appbar, Avatar, Badge, Divider } from "react-native-paper"; // <-- Importamos Badge
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useStore } from "../context/Store";
+import { api } from "../services/api";
 
 import AdminPage from "./AdminPage";
 import HomePage from "./HomePage";
@@ -20,15 +21,42 @@ export default function Dashboard() {
   const { currentUser, setCurrentUser } = useStore();
   const [tab, setTab] = useState<TabType>("Inicio");
   const [menuVisible, setMenuVisible] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
   const { width } = useWindowDimensions();
   const router = useRouter();
 
-  const isLargeScreen = width >= 1024;
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  const isLargeScreen = isMounted && width >= 1024;
+
+  const handleTabPress = useCallback((item: TabType) => {
+    setTab(item);
+  }, []);
 
   // ================= CONTADORES (BADGES) =================
   
-  const viaticesPendientes = 0; 
-  const viajesActivos = 0;
+  const [viajesActivos, setViajesActivos] = useState(0);
+  const [viaticesPendientes, setViaticesPendientes] = useState(0);
+
+  useEffect(() => {
+    const loadCounts = async () => {
+      try {
+        const [tripsRes, viaticsRes] = await Promise.all([
+          api.get("/trips"),
+          api.get("/viatics"),
+        ]);
+        const trips = tripsRes.data || [];
+        const viatics = viaticsRes.data || [];
+        setViajesActivos(trips.filter((t: { estado?: string }) => (t.estado || "").toLowerCase() === "pendiente").length);
+        setViaticesPendientes(viatics.filter((v: { estado?: string }) => (v.estado || "").toLowerCase() === "pendiente").length);
+      } catch (error) {
+        console.error("Error cargando contadores del menú", error);
+      }
+    };
+    if (currentUser) loadCounts();
+  }, [currentUser, tab]);
 
   if (!currentUser) {
     return (
@@ -111,8 +139,11 @@ export default function Dashboard() {
           <View style={styles.sideMenu}>
             
             <View style={styles.logoContainer}>
-              <FontAwesome5 name="truck-moving" size={26} color="#007bff" />
-              <Text style={styles.logoText}>Volta</Text>
+              <Image
+                source={require("../assets/images/logo-volta.jpeg")}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
             </View>
             <Divider style={styles.divider} />
 
@@ -137,7 +168,7 @@ export default function Dashboard() {
                   <TouchableOpacity 
                     key={item} 
                     style={[styles.sideTab, isActive && styles.sideTabActive]} 
-                    onPress={() => setTab(item)}
+                    onPress={() => handleTabPress(item)}
                     // @ts-ignore: Propiedad nativa para tooltips en navegadores web (Prioridad 3)
                     dataSet={Platform.OS === 'web' ? { title: getTabTooltip(item) } : undefined}
                     title={Platform.OS === 'web' ? getTabTooltip(item) : undefined}
@@ -227,7 +258,7 @@ export default function Dashboard() {
                       <TouchableOpacity 
                         key={item} 
                         style={[styles.drawerItem, isActive && styles.drawerItemActive]}
-                        onPress={() => { setTab(item); setMenuVisible(false); }}
+                        onPress={() => { handleTabPress(item); setMenuVisible(false); }}
                       >
                         <View style={styles.menuItemLeftSection}>
                           <FontAwesome5 
@@ -278,19 +309,16 @@ const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
   
   /* ===== SIDEBAR WEB ===== */
-  sideMenu: { width: 280, backgroundColor: "#1e293b", padding: 20, height: "100%", justifyContent: "space-between" },
-  logoContainer: { flexDirection: "row", alignItems: "center", marginBottom: 5, paddingLeft: 5 },
-  logoText: { fontSize: 22, fontWeight: "bold", color: "#ffffff", marginLeft: 10, letterSpacing: 0.5 },
+  sideMenu: { width: 280, backgroundColor: "#111111", padding: 20, height: "100%", justifyContent: "space-between" },
+  logoContainer: { alignItems: "center", marginBottom: 5, paddingHorizontal: 5 },
+  logoImage: { width: 200, height: 72 },
   avatarContainer: { flexDirection: "row", alignItems: "center", paddingVertical: 5, paddingHorizontal: 5 },
   userInfo: { marginLeft: 12, flex: 1 },
   name: { fontSize: 16, fontWeight: "bold", color: "#ffffff" },
   role: { fontSize: 13, color: "#38bdf8", marginTop: 2, fontWeight: "500" },
   divider: { backgroundColor: "rgba(148, 163, 184, 0.2)", marginVertical: 15 },
   
-  sideTab: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between", // Empuja los Badges al extremo derecho
+  sideTab:{flexDirection: "row", alignItems: "center",justifyContent: "space-between", // Empuja los Badges al extremo derecho
     padding: 14, 
     marginVertical: 4,
     borderRadius: 8,

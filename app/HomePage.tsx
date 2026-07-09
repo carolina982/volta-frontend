@@ -1,8 +1,8 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Image, Modal, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { Button, Checkbox, FAB, Searchbar, Snackbar, TextInput } from "react-native-paper";
+import { ActivityIndicator, Alert, Animated, Image, Modal, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput as RNTextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { Checkbox, FAB, Portal, Snackbar, TextInput } from "react-native-paper";
 import { api, BASE_URL } from "../services/api";
 import { User } from "../types";
 
@@ -21,6 +21,8 @@ interface HomePageProps {
 }
 
 export default function HomePage({ currentUser }: HomePageProps) {
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   
@@ -43,12 +45,32 @@ export default function HomePage({ currentUser }: HomePageProps) {
   const [snackbarMessage, setSnackbarMessage] = useState("");
 
   const isAdmin = currentUser.rol?.toLowerCase() === "admin";
+  const [status,setStatus]=useState({viajes:0,viaticos:0,unidades:0});
+
+  const fadeAnim=React.useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     loadAnnouncements();
+    loadStatus();
   }, []);
 
-  const loadAnnouncements = async () => {
+  useEffect(() => {
+  const handleKeyDown = (e: KeyboardEvent) => {
+    // Si presiona Ctrl + N (o Cmd + N en Mac)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+      e.preventDefault();
+      // Solo abrimos si el modal no está abierto ya para evitar duplicados
+      if (isAdmin && !modalVisible) openCreateModal();
+    }
+  };
+
+  if (Platform.OS === 'web') {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }
+}, [isAdmin, modalVisible]); // Agregué modalVisible como dependencia para mayor seguridad
+
+const loadAnnouncements = async () => {
     try {
       const res = await api.get("/announcements");
       const data = res.data.map((a: any) => ({
@@ -66,6 +88,16 @@ export default function HomePage({ currentUser }: HomePageProps) {
       });
 
       setAnnouncements(sortedData);
+      
+      // --- ESTA ES LA CORRECCIÓN ---
+     
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true,
+      }).start();
+      // -----------------------------
+
     } catch (error) {
       console.error("Error cargando anuncios", error);
     } finally {
@@ -74,10 +106,49 @@ export default function HomePage({ currentUser }: HomePageProps) {
     }
   };
 
+const loadStatus = async () => {
+    try {
+      const [v, m, u] = await Promise.all([
+        api.get("/trips/count"),
+        api.get("/viatics/count"),
+        api.get("/units/count"),
+      ]);
+
+      setStatus({ viajes: v.data.count, viaticos: m.data.count, unidades: u.data.count });
+    } catch (e: unknown) {
+      
+      if (e && typeof e === 'object' && 'response' in e) {
+        const err = e as any; 
+        console.error("Error del servidor:", err.response.data);
+      } else {
+       
+        console.error("Error inesperado:", e);
+      }
+    }
+  }
+
   const onRefresh = () => {
     setRefreshing(true);
     loadAnnouncements();
+    loadStatus();
   };
+
+  const modalInputProps = {
+    mode: "flat" as const,
+    underlineColor: "transparent",
+    activeUnderlineColor: "transparent",
+    dense: true,
+    contentStyle: styles.modalInputContent,
+    style: styles.modalInput,
+    placeholderTextColor: "#9ca3af",
+  };
+
+  const renderModalField = (label: string, field: React.ReactNode) => (
+    <View style={styles.modalFieldGroup}>
+      <Text style={styles.modalFieldLabel}>{label}</Text>
+      {field}
+    </View>
+  );
 
   const handleSelectImage = async (useCamera = false) => {
     if (Platform.OS === "web") {
@@ -215,143 +286,289 @@ export default function HomePage({ currentUser }: HomePageProps) {
     a.contenido.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const renderModalContent = () => (
+    <View
+      style={styles.modalCard}
+      onStartShouldSetResponder={() => true}
+      {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+    >
+      <View style={styles.modalHeader}>
+        <View style={styles.modalHeaderLeft}>
+          <View style={styles.modalIconBadge}>
+            <FontAwesome5 name="bullhorn" size={16} color="#ffffff" />
+          </View>
+          <View>
+            <Text style={styles.modalTitle}>{editingId ? "Editar Aviso" : "Nuevo Aviso"}</Text>
+            <Text style={styles.modalSubtitle}>
+              {editingId ? "Actualiza el contenido del aviso" : "Publica un aviso para la flota"}
+            </Text>
+          </View>
+        </View>
+        <TouchableOpacity style={styles.modalCloseButton} onPress={closeModal} disabled={saving} activeOpacity={0.85}>
+          <FontAwesome5 name="times" size={14} color="#6b7280" />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
+        {renderModalField(
+          "Título",
+          <TextInput
+            placeholder="Título del aviso"
+            value={titulo}
+            onChangeText={setTitulo}
+            error={showErrors && !titulo.trim()}
+            {...modalInputProps}
+          />
+        )}
+        {renderModalField(
+          "Contenido",
+          <TextInput
+            placeholder="Cuerpo del mensaje"
+            value={contenido}
+            onChangeText={setContenido}
+            multiline
+            numberOfLines={5}
+            error={showErrors && !contenido.trim()}
+            {...modalInputProps}
+            style={[styles.modalInput, styles.modalInputMultiline]}
+          />
+        )}
+        <Text style={styles.charCounter}>{contenido.length} caracteres</Text>
+
+        {renderModalField(
+          "Autor",
+          <TextInput placeholder="Nombre del autor" value={autor} onChangeText={setAutor} {...modalInputProps} />
+        )}
+
+        <TouchableOpacity style={styles.checkboxContainer} onPress={() => setFijado(!fijado)} activeOpacity={0.85}>
+          <Checkbox status={fijado ? "checked" : "unchecked"} color="#111111" />
+          <Text style={styles.checkboxLabel}>Fijar aviso en la parte superior</Text>
+        </TouchableOpacity>
+
+        <View
+          {...(Platform.OS === "web"
+            ? {
+                onDragOver: (e: any) => e.preventDefault(),
+                onDrop: (e: any) => {
+                  e.preventDefault();
+                  const file = e.dataTransfer.files[0];
+                  if (file) {
+                    setImageFile(file);
+                    setImageUri(URL.createObjectURL(file));
+                  }
+                },
+              }
+            : {})}
+          style={styles.dropZone}
+        >
+          <FontAwesome5 name="cloud-upload-alt" size={22} color="#9ca3af" />
+          <Text style={styles.dropZoneText}>
+            {Platform.OS === "web" ? "Arrastra una imagen o selecciona archivo" : "Adjunta una imagen al aviso"}
+          </Text>
+          <View style={styles.modalBtnRow}>
+            <TouchableOpacity style={styles.modalBtn} onPress={() => handleSelectImage(false)} activeOpacity={0.85}>
+              <Text style={styles.modalBtnText}>{Platform.OS === "web" ? "Subir archivo" : "Galería"}</Text>
+            </TouchableOpacity>
+            {Platform.OS !== "web" && (
+              <TouchableOpacity style={styles.modalBtn} onPress={() => handleSelectImage(true)} activeOpacity={0.85}>
+                <Text style={styles.modalBtnText}>Cámara</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {imageUri && (
+          <View style={styles.previewContainer}>
+            <Image source={{ uri: imageUri }} style={styles.previewImage} />
+            <TouchableOpacity
+              style={styles.removeImageBadge}
+              onPress={() => { setImageUri(null); setImageFile(null); }}
+              activeOpacity={0.85}
+            >
+              <FontAwesome5 name="times" size={12} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        )}
+      </ScrollView>
+
+      <View style={styles.modalActions}>
+        <TouchableOpacity style={styles.cancelButton} onPress={closeModal} disabled={saving} activeOpacity={0.85}>
+          <Text style={styles.cancelButtonText}>Cancelar</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+          onPress={handleSaveAnnouncement}
+          disabled={saving}
+          activeOpacity={0.85}
+        >
+          {saving ? (
+            <ActivityIndicator size="small" color="#ffffff" />
+          ) : (
+            <Text style={styles.saveButtonText}>Guardar</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView 
+      <ScrollView
         style={styles.container}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#111111" />}
+        showsVerticalScrollIndicator={false}
       >
-        <View style={styles.welcomeBanner}>
-          <View style={{ flex: 1, marginRight: 10 }}>
-            <Text style={styles.bannerTitle}>¡Hola, {currentUser.nombre}!</Text>
-            <Text style={styles.bannerSubtitle}>Revisa los avisos importantes y circulares de la flota.</Text>
+        <View style={styles.pageHeader}>
+          <View style={styles.pageHeaderText}>
+            <Text style={styles.pageTitle}>¡Hola, {currentUser.nombre}!</Text>
+            <Text style={styles.subtitle}>Revisa los avisos importantes y circulares de la flota.</Text>
           </View>
-          
-          {isAdmin && Platform.OS === "web" && (
-            <Button mode="contained" icon="plus" buttonColor="#0d75bb" textColor="#fff" onPress={openCreateModal}>
-              Crear Aviso
-            </Button>
+          {isAdmin && (
+            <TouchableOpacity style={styles.addButton} onPress={openCreateModal} activeOpacity={0.85}>
+              <FontAwesome5 name="plus" size={13} color="#ffffff" />
+              <Text style={styles.addButtonText}>Crear Aviso</Text>
+            </TouchableOpacity>
           )}
         </View>
 
-        <Searchbar
-          placeholder="Buscar avisos por título o palabra clave..."
-          onChangeText={setSearchQuery}
-          value={searchQuery}
-          style={styles.searchBar}
-          inputStyle={{ minHeight: 45 }}
-        />
+        <View style={styles.searchWrap}>
+          <FontAwesome5 name="search" size={14} color="#9ca3af" style={styles.searchIcon} />
+          <RNTextInput
+            placeholder="Buscar avisos por título o palabra clave..."
+            placeholderTextColor="#9ca3af"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            style={styles.searchInput}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery("")} activeOpacity={0.85}>
+              <FontAwesome5 name="times-circle" size={16} color="#9ca3af" />
+            </TouchableOpacity>
+          )}
+        </View>
 
-        {loading ? (
-          <View style={styles.centerSection}>
-            <ActivityIndicator size="large" color="#007bff" />
-            <Text style={{ marginTop: 12, color: "#64748b" }}>Sincronizando feed...</Text>
+        <View style={styles.statsPanel}>
+          <View style={styles.statCard}>
+            <FontAwesome5 name="route" size={14} color="#111111" />
+            <Text style={styles.statVal}>{status.viajes}</Text>
+            <Text style={styles.statLabel}>Viajes</Text>
           </View>
-        ) : filteredAnnouncements.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <FontAwesome5 name="search" size={50} color="#cbd5e1" />
-            <Text style={styles.emptyTitle}>No se encontraron avisos</Text>
-            <Text style={styles.emptyText}>Prueba cambiando los términos de búsqueda.</Text>
+          <View style={styles.statCard}>
+            <FontAwesome5 name="wallet" size={14} color="#111111" />
+            <Text style={styles.statVal}>{status.viaticos}</Text>
+            <Text style={styles.statLabel}>Viáticos</Text>
           </View>
-        ) : (
-          <View style={Platform.OS === "web" ? styles.webGrid : styles.mobileStack}>
-            {filteredAnnouncements.map((a) => (
-              <View key={a.id} style={[styles.card, a.fijado && styles.cardPinned]}>
-                {a.fijado && (
-                  <View style={styles.pinnedBadge}>
-                    <FontAwesome5 name="thumbtack" size={11} color="#fff" />
-                    <Text style={styles.pinnedBadgeText}>IMPORTANTE</Text>
+          <View style={styles.statCard}>
+            <FontAwesome5 name="truck" size={14} color="#111111" />
+            <Text style={styles.statVal}>{status.unidades}</Text>
+            <Text style={styles.statLabel}>Unidades</Text>
+          </View>
+        </View>
+
+        <View style={styles.listPanel}>
+          {!loading && filteredAnnouncements.length > 0 && (
+            <View style={styles.listHeader}>
+              <Text style={styles.listHeaderTitle}>{filteredAnnouncements.length} avisos</Text>
+              {searchQuery ? <Text style={styles.listHeaderHint}>Filtrado por búsqueda</Text> : null}
+            </View>
+          )}
+
+          {loading ? (
+            <View style={styles.emptyState}>
+              <ActivityIndicator size="large" color="#111111" />
+              <Text style={styles.emptyText}>Sincronizando avisos...</Text>
+            </View>
+          ) : filteredAnnouncements.length === 0 ? (
+            <View style={styles.emptyState}>
+              <FontAwesome5 name="bullhorn" size={24} color="#9ca3af" />
+              <Text style={styles.emptyTitle}>No se encontraron avisos</Text>
+              <Text style={styles.emptyText}>Prueba cambiando los términos de búsqueda.</Text>
+            </View>
+          ) : (
+            <View style={isMobile ? styles.mobileStack : styles.webGrid}>
+              {filteredAnnouncements.map((a) => (
+                <Animated.View
+                  key={a.id}
+                  style={{
+                    opacity: fadeAnim,
+                    transform: [{ translateY: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+                    width: isMobile ? "100%" : "32%",
+                    minWidth: isMobile ? undefined : 280,
+                  }}
+                >
+                  <View style={[styles.card, a.fijado && styles.cardPinned]}>
+                    {a.fijado && (
+                      <View style={styles.pinnedBadge}>
+                        <FontAwesome5 name="thumbtack" size={10} color="#111111" />
+                        <Text style={styles.pinnedBadgeText}>IMPORTANTE</Text>
+                      </View>
+                    )}
+
+                    {a.image && <Image source={{ uri: a.image }} style={styles.announcementImage} />}
+
+                    <View style={styles.cardContent}>
+                      <Text style={styles.cardTitle}>{a.titulo}</Text>
+                      <Text style={styles.cardBody} numberOfLines={4}>{a.contenido}</Text>
+
+                      <View style={styles.cardMetaRow}>
+                        <View style={styles.metaItem}>
+                          <FontAwesome5 name="user" size={10} color="#9ca3af" />
+                          <Text style={styles.metaText}>{a.autor}</Text>
+                        </View>
+                        <View style={styles.metaItem}>
+                          <FontAwesome5 name="calendar-alt" size={10} color="#9ca3af" />
+                          <Text style={styles.metaText}>{new Date(a.fecha).toLocaleDateString("es-MX")}</Text>
+                        </View>
+                      </View>
+
+                      {isAdmin && (
+                        <View style={styles.cardActions}>
+                          <TouchableOpacity style={styles.iconAction} onPress={() => handleEdit(a)} activeOpacity={0.85}>
+                            <FontAwesome5 name="pen" size={12} color="#111111" />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.iconAction, styles.iconActionDanger]}
+                            onPress={() => handleDeleteConfirm(a.id)}
+                            activeOpacity={0.85}
+                          >
+                            <FontAwesome5 name="trash-alt" size={12} color="#dc2626" />
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
                   </View>
-                )}
+                </Animated.View>
+              ))}
+            </View>
+          )}
+        </View>
 
-                {a.image && (
-                  <Image source={{ uri: a.image }} style={styles.announcementImage} />
-                )}
-                
-                <View style={styles.cardContent}>
-                  <Text style={styles.cardTitle}>{a.titulo}</Text>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.cardBody}>{a.contenido}</Text>
-                  
-                  <View style={styles.cardMetaRow}>
-                    <Text style={styles.metaText}>
-                      <FontAwesome5 name="user" size={11} color="#94a3b8" /> Por: {a.autor}
-                    </Text>
-                    <Text style={styles.metaText}>
-                      <FontAwesome5 name="calendar-alt" size={11} color="#94a3b8" /> {new Date(a.fecha).toLocaleDateString()}
-                    </Text>
-                  </View>
-
-                 {isAdmin && (
-                  <View style={styles.buttonsRow}>
-                    <Button  mode="outlined" icon="pencil" textColor="#f39c12" style={[styles.actionButton, { borderColor: "#f39c12" }]} onPress={() => handleEdit(a)}{...(Platform.OS === 'web' ? { title: "Editar este anuncio" } : {})}>Editar
-                    </Button>
-                    <Button  mode="contained" icon="trash" buttonColor="#ef4444" textColor="#fff" style={styles.actionButton} onPress={() => handleDeleteConfirm(a.id)}{...(Platform.OS === 'web' ? { title: "Eliminar este anuncio" } : {})}> Eliminar
-                 </Button>
-                </View>
-                 )}
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
-        <View style={{ height: 100 }} />
+        <View style={{ height: 40 }} />
       </ScrollView>
 
       {isAdmin && Platform.OS !== "web" && (
         <FAB icon="plus" style={styles.fab} color="#fff" onPress={openCreateModal} />
       )}
 
-      <Modal visible={modalVisible} animationType="fade" transparent={true} onRequestClose={closeModal}>
-        <View style={styles.modalBackground}>
-          <View style={[styles.modalContainer, Platform.OS === "web" && styles.modalContainerWeb]}>
-            <Text style={styles.modalTitle}>{editingId ? "⚙️ Modificar Aviso" : "📣 Publicar Nuevo Aviso"}</Text>
-            
-            {/* CORREGIDO */}
-            <TextInput  label="Título del aviso *"value={titulo} onChangeText={setTitulo} mode="outlined" style={styles.input} error={showErrors && !titulo.trim()}activeOutlineColor="#0d75bb"/>
-            <TextInput  label="Contenido / Cuerpo del mensaje *" value={contenido} onChangeText={setContenido}mode="outlined" multiline numberOfLines={5} style={styles.input} error={showErrors && !contenido.trim()}activeOutlineColor="#0d75bb"/>
-            
-            <Text style={styles.charCounter}>{contenido.length} caracteres registrados</Text>
-            <TextInput  label="Autor del aviso *"value={autor} onChangeText={setAutor} mode="outlined" style={styles.input} activeOutlineColor="#0d75bb"/>
-
-            <TouchableOpacity style={styles.checkboxContainer} onPress={() => setFijado(!fijado)}>
-              <Checkbox status={fijado ? "checked" : "unchecked"} color="#0d75bb" />
-              <Text style={styles.checkboxLabel}>Fijar este aviso en la parte superior</Text>
-            </TouchableOpacity>
-
-            <View style={{ flexDirection: "row", gap: 10, marginBottom: 15 }}>
-              <Button mode="contained-tonal" icon="image" style={{ flex: 1 }} onPress={() => handleSelectImage(false)}>
-                {Platform.OS === "web" ? "Subir Archivo" : "Galería"}
-              </Button>
-              {Platform.OS !== "web" && (
-                <Button mode="contained-tonal" icon="camera" style={{ flex: 1 }} onPress={() => handleSelectImage(true)}>
-                  Cámara
-                </Button>
-              )}
-            </View>
-
-            {imageUri && (
-              <View style={styles.previewContainer}>
-                <Image source={{ uri: imageUri }} style={styles.previewImage} />
-                <TouchableOpacity style={styles.removeImageBadge} onPress={() => { setImageUri(null); setImageFile(null); }}>
-                  <FontAwesome5 name="times" size={12} color="#fff" />
-                </TouchableOpacity>
-              </View>
-            )}
-
-            <View style={styles.buttonsRow}>
-              <Button mode="text" textColor="#64748b" style={{ flex: 1 }} onPress={closeModal} disabled={saving}>
-                Cancelar
-              </Button>
-              <Button mode="contained" buttonColor="#007bff" style={{ flex: 1, marginLeft: 10 }} onPress={handleSaveAnnouncement} loading={saving} disabled={saving}>
-                Guardar
-              </Button>
-            </View>
+      {Platform.OS === "web" && modalVisible ? (
+        <Portal>
+          <View style={styles.modalBackground} {...(Platform.OS === "web" ? { onClick: closeModal } : {})}>
+            {renderModalContent()}
           </View>
-        </View>
-      </Modal>
+        </Portal>
+      ) : (
+        <Modal visible={modalVisible} animationType="fade" transparent onRequestClose={closeModal}>
+          <View style={styles.modalBackground}>{renderModalContent()}</View>
+        </Modal>
+      )}
 
-      <Snackbar visible={snackbarVisible} onDismiss={() => setSnackbarVisible(false)} duration={4000} style={{ backgroundColor: "#1e293b" }}>
+      <Snackbar
+        visible={snackbarVisible}
+        onDismiss={() => setSnackbarVisible(false)}
+        duration={4000}
+        style={{ backgroundColor: "#111111" }}
+      >
         {snackbarMessage}
       </Snackbar>
     </View>
@@ -359,50 +576,274 @@ export default function HomePage({ currentUser }: HomePageProps) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f4f6f9", paddingHorizontal: 15 },
-  centerSection: { padding: 50, justifyContent: "center", alignItems: "center" },
-  searchBar: { marginBottom: 20, backgroundColor: "#fff", borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0" },
-  
-  welcomeBanner: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#ffffff", padding: 20, borderRadius: 12, marginVertical: 20, borderWidth: 1, borderColor: "#e2e8f0" },
-  bannerTitle: { fontSize: 22, fontWeight: "bold", color: "#1e293b" },
-  bannerSubtitle: { fontSize: 14, color: "#64748b", marginTop: 4 },
+  container: { flex: 1, backgroundColor: "transparent" },
+  scrollContent: { paddingVertical: 4, paddingBottom: 24 },
+  pageHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 16,
+    gap: 12,
+  },
+  pageHeaderText: { flex: 1 },
+  pageTitle: { fontSize: 24, fontWeight: "800", color: "#111111", letterSpacing: 0.2 },
+  subtitle: { fontSize: 13, color: "#6b7280", marginTop: 4 },
+  addButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#111111",
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    flexShrink: 0,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  addButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 13 },
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 14,
+    marginBottom: 14,
+    gap: 10,
+    ...(Platform.OS === "web" ? { boxShadow: "0 4px 16px rgba(0,0,0,0.03)" as any } : {}),
+  },
+  searchIcon: { marginTop: 1 },
+  searchInput: { flex: 1, height: 46, fontSize: 14, color: "#111111", fontWeight: "500" },
+  statsPanel: { flexDirection: "row", gap: 10, marginBottom: 14 },
+  statCard: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    alignItems: "center",
+    gap: 6,
+    ...(Platform.OS === "web" ? { boxShadow: "0 4px 16px rgba(0,0,0,0.03)" as any } : {}),
+  },
+  statVal: { fontSize: 20, fontWeight: "800", color: "#111111" },
+  statLabel: { fontSize: 11, color: "#6b7280", fontWeight: "600" },
+  listPanel: {
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
+    ...(Platform.OS === "web" ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any } : {}),
+  },
+  listHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 12,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+  },
+  listHeaderTitle: { fontSize: 14, fontWeight: "700", color: "#111111" },
+  listHeaderHint: { fontSize: 12, color: "#9ca3af", fontWeight: "600" },
+  emptyState: { paddingVertical: 48, paddingHorizontal: 20, alignItems: "center", gap: 8 },
+  emptyTitle: { fontSize: 16, fontWeight: "700", color: "#111111" },
+  emptyText: { fontSize: 14, color: "#64748b", textAlign: "center" },
+  mobileStack: { flexDirection: "column", gap: 12 },
+  webGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  card: {
+    backgroundColor: "#fafafa",
+    borderRadius: 14,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    position: "relative",
+  },
+  cardPinned: { borderColor: "#111111", borderWidth: 1.5 },
+  pinnedBadge: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#111111",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    zIndex: 10,
+  },
+  pinnedBadgeText: { color: "#111111", fontSize: 10, fontWeight: "800", letterSpacing: 0.4 },
+  announcementImage: { width: "100%", height: 160, resizeMode: "cover" },
+  cardContent: { padding: 14 },
+  cardTitle: { fontSize: 15, fontWeight: "800", color: "#111111", marginBottom: 8 },
+  cardBody: { fontSize: 13, color: "#4b5563", lineHeight: 20 },
+  cardMetaRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+    gap: 8,
+  },
+  metaItem: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1 },
+  metaText: { fontSize: 11, color: "#6b7280", fontWeight: "600" },
+  cardActions: { flexDirection: "row", gap: 8, justifyContent: "flex-end", marginTop: 12 },
+  iconAction: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  iconActionDanger: { backgroundColor: "#fef2f2", borderColor: "#fecaca" },
+  fab: { position: "absolute", margin: 20, right: 0, bottom: 20, backgroundColor: "#111111" },
 
-  emptyContainer: { padding: 50, alignItems: "center", backgroundColor: "#ffffff", borderRadius: 12, borderWidth: 1, borderColor: "#e2e8f0" },
-  emptyTitle: { fontSize: 17, fontWeight: "bold", color: "#475569", marginTop: 15 },
-  emptyText: { fontSize: 13, color: "#94a3b8", textAlign: "center", marginTop: 5, maxWidth: 350 },
-
-  webGrid: {flexDirection: "row",flexWrap: "wrap",gap: 20 },
-  mobileStack: { flexDirection: "column", gap: 15 },
-  card: {backgroundColor: "#fff",borderRadius: 12,overflow: "hidden",borderWidth: 1,borderColor: "#e2e8f0",position: "relative",elevation: 2,// CORREGIDO: Reemplazado calc() por porcentaje segurowidth: Platform.OS === "web" ? "31%" : "100%",minWidth: Platform.OS === "web" ? 300 : undefined{
-    },
-  cardPinned: { borderColor: "#0d75bb", borderWidth: 1.5, backgroundColor: "#f8fafc" },
-  pinnedBadge: { position: "absolute", top: 12, left: 12, backgroundColor: "#0d75bb", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, flexDirection: "row", alignItems: "center", gap: 5, zIndex: 10 },
-  pinnedBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
-  
-  announcementImage: { width: "100%", height: 190, resizeMode: "cover" },
-  cardContent: { padding: 18 },
-  cardTitle: { fontSize: 17, fontWeight: "bold", color: "#1e293b" },
-  dividerLine: { height: 1, backgroundColor: "#e2e8f0", marginVertical: 10 },
-  cardBody: { fontSize: 14, color: "#475569", lineHeight: 21 },
-  cardMetaRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 15, backgroundColor: "#f8fafc", padding: 8, borderRadius: 6 },
-  metaText: { fontSize: 12, color: "#64748b", fontWeight: "500" },
-
-  buttonsRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 15 },
-  actionButton: { flex: 1, marginHorizontal: 4, borderRadius: 8 },
-
-  fab: { position: "absolute", margin: 20, right: 0, bottom: 20, backgroundColor: "#0d75bb" },
-
-  modalBackground: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(15, 23, 42, 0.5)" },
-  modalContainer: { width: "92%", backgroundColor: "#fff", padding: 25, borderRadius: 16, maxHeight: "90%" },
-  modalContainerWeb: { maxWidth: 650 },
-  modalTitle: { fontSize: 19, fontWeight: "bold", marginBottom: 18, color: "#1e293b" },
-  input: { marginBottom: 12, backgroundColor: "#fff" },
-  charCounter: { fontSize: 11, color: "#94a3b8", textAlign: "right", marginTop: -8, marginBottom: 12, marginRight: 4 },
-  
-  checkboxContainer: { flexDirection: "row", alignItems: "center", marginBottom: 15, marginLeft: -4 },
-  checkboxLabel: { fontSize: 13, color: "#475569", fontWeight: "500" },
-  
-  previewContainer: { position: "relative", marginBottom: 15 },
-  previewImage: { width: "100%", height: 190, borderRadius: 10, resizeMode: "cover" },
-  removeImageBadge: { position: "absolute", top: 8, right: 8, backgroundColor: "rgba(239, 68, 68, 0.9)", width: 26, height: 26, borderRadius: 13, justifyContent: "center", alignItems: "center" }
+  modalBackground: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.5)",
+    padding: 20,
+    ...(Platform.OS === "web" ? { position: "fixed" as any, zIndex: 9999 } : {}),
+  },
+  modalCard: {
+    width: Platform.OS === "web" ? 560 : "96%",
+    maxHeight: Platform.OS === "web" ? ("90vh" as any) : "92%",
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    ...(Platform.OS === "web" ? { boxShadow: "0 20px 50px rgba(0,0,0,0.18)" as any } : {}),
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+  },
+  modalHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 12, flex: 1, paddingRight: 12 },
+  modalIconBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#111111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalTitle: { fontSize: 18, fontWeight: "800", color: "#111111" },
+  modalSubtitle: { fontSize: 12, color: "#6b7280", marginTop: 2 },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#f3f4f6",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  modalScroll: { flexGrow: 0, flexShrink: 1 },
+  modalScrollContent: { paddingHorizontal: 22, paddingTop: 18, paddingBottom: 20 },
+  modalFieldGroup: { marginBottom: 14 },
+  modalFieldLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#374151",
+    marginBottom: 6,
+    letterSpacing: 0.2,
+  },
+  modalInput: {
+    width: "100%",
+    backgroundColor: "#fafafa",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  modalInputMultiline: { minHeight: 110 },
+  modalInputContent: { color: "#111111", fontWeight: "600", fontSize: 14 },
+  charCounter: { fontSize: 11, color: "#9ca3af", textAlign: "right", marginTop: -8, marginBottom: 12 },
+  checkboxContainer: { flexDirection: "row", alignItems: "center", marginBottom: 14, marginLeft: -4 },
+  checkboxLabel: { fontSize: 13, color: "#374151", fontWeight: "600" },
+  dropZone: {
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    borderColor: "#d1d5db",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 14,
+    backgroundColor: "#fafafa",
+    alignItems: "center",
+    gap: 8,
+  },
+  dropZoneText: { fontSize: 13, color: "#6b7280", textAlign: "center" },
+  modalBtnRow: { flexDirection: "row", gap: 8, flexWrap: "wrap", justifyContent: "center" },
+  modalBtn: {
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: "#111111",
+    backgroundColor: "#ffffff",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  modalBtnText: { color: "#111111", fontWeight: "700", fontSize: 12 },
+  previewContainer: { position: "relative", marginBottom: 8 },
+  previewImage: { width: "100%", height: 160, borderRadius: 10, resizeMode: "cover" },
+  removeImageBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "#111111",
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingHorizontal: 22,
+    paddingTop: 14,
+    paddingBottom: 22,
+    borderTopWidth: 1,
+    borderTopColor: "#f3f4f6",
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+    borderRadius: 999,
+    paddingVertical: 13,
+    alignItems: "center",
+    borderWidth: 1.5,
+    borderColor: "#111111",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  cancelButtonText: { color: "#111111", fontWeight: "700", fontSize: 14 },
+  saveButton: {
+    flex: 1,
+    backgroundColor: "#111111",
+    borderRadius: 999,
+    paddingVertical: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  saveButtonDisabled: { opacity: 0.6 },
+  saveButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
 });
