@@ -309,7 +309,7 @@ const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
   
   /* ===== SIDEBAR WEB ===== */
-  sideMenu: { width: 280, backgroundColor: "#111111", padding: 20, height: "100%", justifyContent: "space-between" },
+  sideMenu: { width: 280, backgroundColor: "#070707", padding: 20, height: "100%", justifyContent: "space-between" },
   logoContainer: { alignItems: "center", marginBottom: 5, paddingHorizontal: 5 },
   logoImage: { width: 200, height: 72 },
   avatarContainer: { flexDirection: "row", alignItems: "center", paddingVertical: 5, paddingHorizontal: 5 },
