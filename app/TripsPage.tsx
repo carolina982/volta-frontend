@@ -297,28 +297,29 @@ const saveTrip = async () => {
   
 
 
-const deleteTrip = async(id:string)=>{
+const deleteTrip = async (id: string) => {
   if (!isAdmin) return;
-  const proceedWinthDelete =async ()=>{
+  
+  const proceedWithDelete = async () => {
     try {
-      await api.delete('/trips/${id}');
-      setTrips((prev)=>prev.filter((t)=> t.id !== id));
-      Alert.alert("Exito","Viaje eliminado correctamente");
-    }catch(error){
-      console.error("Error eliminando viaje",error);
-      Alert.alert("Error ","No se pudo eliminar el viaje");
+      await api.delete(`/trips/${id}`); 
+      
+      setTrips((prev) => prev.filter((t) => t.id !== id));
+      Alert.alert("Éxito", "Viaje eliminado correctamente");
+    } catch (error) {
+      console.error("Error eliminando viaje", error);
+      Alert.alert("Error", "No se pudo eliminar el viaje");
     }
   };
-  if (Platform.OS === "web"){
-    const confirmed =window.confirm("Estas seguro de que deseas eliminar este viaje");
-    if (confirmed) proceedWinthDelete();
-  }else{
-    Alert.alert("Confirmar eliminacion ","¿Estas seguro de que deseas eliminar este viaje?",
-      [
-        {text:"Cancelar",style:"cancel"},
-        {text:"Eliminar",style:"destructive",onPress:proceedWinthDelete}
-      ]
-    );
+
+  if (Platform.OS === "web") {
+    const confirmed = window.confirm("¿Estás seguro de que deseas eliminar este viaje?");
+    if (confirmed) await proceedWithDelete(); // Agregué await por seguridad
+  } else {
+    Alert.alert("Confirmar eliminación", "¿Estás seguro de que deseas eliminar este viaje?", [
+      { text: "Cancelar", style: "cancel" },
+      { text: "Eliminar", style: "destructive", onPress: proceedWithDelete }
+    ]);
   }
 };
 

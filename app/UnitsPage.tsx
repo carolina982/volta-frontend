@@ -184,34 +184,31 @@ export default function UnitsPage() {
     }
   };
 
-  const deleteUnit = async(id:string)=>{
-    console.log ("Eliminar unidad id",id);
-    let confirmed =false;
-    if (Platform.OS === "web"){
-      confirmed= window.confirm("¿Desea eliminar esta unidad?");
-      if (!confirmed) return;
-    }else {
-      confirmed = await new Promise<boolean>((resolve)=>{
-        Alert.alert("Confirmar" , "¿Desea eliminar esta unidad?",[
-          {text:"Cancelar" , style:"cancel" , onPress:()=>resolve(false)},
-          {text:"Eliminar", style:"destructive" , onPress:()=>resolve(true)},
-        ],
-        {cancelable:true}
-      );
-      });
-      if (!confirmed) return;
-    }
+ const deleteUnit =async (id:string)=>{
+  const performDelete =async()=>{
     try {
-      const res= await api.delete(`/units/${id}`);
-      console.log("DELETE unidad response", res.data);
-      setUnits((prev)=>prev.filter((u)=> u.id !==id));
-      Alert.alert("Exito", "Unidad eliminada correctamente");
-    }catch (error){
-      console.log("Error eliminando unidad", error);
-      Alert.alert("Error", "No se pudo eliminar la unidad")
+      await api.delete(`/unist/${id}`);
+      setUnits((prev)=>prev.filter((u)=>u.id !== id));
+      Alert.alert("Exito","Unidad eliminada correctamente");
+    } catch (error){
+      console.error("Error eliminando unidad",error);
+      Alert.alert("Error","No se pudo eliminar la unidad");
     }
   };
-
+  if (Platform.OS === "web"){
+    const confirmed=window.confirm("¿Está seguro de que desea eliminar esta unidad? Esta acción no se puede deshacer");
+    if (confirmed){
+      await performDelete();
+    }
+  }else{
+    Alert.alert("Confirmacion eliminacion","¿Deseas elimiar esta unidad  permamente?",[
+      {text:"Cancelar",style:"cancel"},
+      {text:"Eliminar",style:"destructive", onPress:()=>performDelete()},
+    ],
+    {cancelable:true}
+  );
+  }
+ };
 
   const subirInventario=async ()=>{
     if (!pdf){

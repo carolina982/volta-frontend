@@ -1,11 +1,11 @@
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import * as Notifications from "expo-notifications";
 import React from "react";
 import { Platform, TouchableWithoutFeedback } from 'react-native';
 import { Provider as PaperProvider } from "react-native-paper";
 import { StoreProvider, useStore } from "./context/Store";
 import useAutoLogout from "./hooks/useAutoLogout";
-
 
 import { View } from "react-native";
 import AdminPage from "./app/AdminPage";
@@ -19,8 +19,17 @@ import TripsPage from "./app/TripsPage";
 import UnitsPage from "./app/UnitsPage";
 import ViaticsPage from "./app/ViaticsPage";
 
-
-
+//configuracion de notificaciones  
+// Esto le dice a la App cómo debe comportarse cuando llegue una notificación
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,  
+    shouldPlaySound: true,  
+    shouldSetBadge: false,   
+   shouldShowBanner:true,
+   shouldShowList:true,
+ }),
+});
 
 
 // --- INICIO DEL PARCHE DE PORTABILIDAD ---

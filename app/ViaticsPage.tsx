@@ -21,9 +21,7 @@ interface Trip {
   destino?:string
 };
 
-const conceptosBase = [ "Comidas","Hospedaje", "Taxi","Regaderas",
-  "Pensión","Vulcanizadora","Casetas efectivo",
-  "Multa","Comisiones","Fumigación","DEF"
+const conceptosBase = [ "Comidas","Casetas efectivo","DEF"
 ];
 
 const preciosFijos:Record<string,number>={
@@ -98,6 +96,12 @@ export default function ViaticsPage() {
   const [viaticoSeleccionado,setViaticoSeleccionado]=useState<any>(null);
   const [casetaFoto,setCasetaFoto]=useState<string | null>(null);
   const [casetaFotoRemoved,setCasetaFotoRemoved]=useState(false);
+
+  //lista de costos extras
+  const [costosExtrasList,setCostosExtrasList]=useState<{description:string,costo:string}[]>([]);
+  //inpus
+  const [extraDesc,setExtraDesc]=useState("");
+  const [extraCosto,setExtraCosto]=useState("")
 
   interface CargaDiesel{
     cantidad:string;
@@ -286,23 +290,27 @@ export default function ViaticsPage() {
   }, [currentUser, loadViaticos]);
 
   const calcularTotal = () => {
-    let total = 0;
-    conceptosBase.forEach(base =>{const cantidad =Number(conceptos[`${base} Cantidad`] || 0);
+  let total = 0;
+  conceptosBase.forEach(base =>{
+    const cantidad = Number(conceptos[`${base} Cantidad`] || 0);
+    if (base === "Comidas"){
+      total += cantidad * 400;
+    } else {
+      const costo = Number(conceptos[`${base} Costo`] || 0);
+      total += cantidad * costo;
+    }
+  });
+  dieselHistorial.forEach(c => {
+    total += Number(c.costo || 0);
+  });
+  costosExtrasList.forEach(e => {
+    total += Number(e.costo || 0); // Solo suma el costo, no lo multipliques
+  });
 
-      if (base === "Comidas"){
-        total +=cantidad *400;
-      }
-      else{
-        const costo=Number(conceptos[`${base} Costo`] || 0);
-        total +=cantidad * costo;
-      }
-    });
-    dieselHistorial.forEach(c=>{
-      total += Number(c.costo || 0);
-    });
-    total +=Number(tag || 0);
-    return total;
-  };
+  total += Number(tag || 0);
+  
+  return total;
+};
 
   //exportacion  excel 
 const exportViaticosToExcel =async ()=>{
@@ -800,14 +808,7 @@ const openModal = useCallback((viatico?: Viatico) => {
           </TouchableOpacity>
         </View>
 
-        <KeyboardAwareScrollView
-          enableOnAndroid
-          extraScrollHeight={120}
-          keyboardShouldPersistTaps="handled"
-          style={styles.modalScroll}
-          contentContainerStyle={styles.modalScrollContent}
-          showsVerticalScrollIndicator={false}
-        >
+        <KeyboardAwareScrollView  enableOnAndroid extraScrollHeight={120}keyboardShouldPersistTaps="handled"style={styles.modalScroll}contentContainerStyle={styles.modalScrollContent}showsVerticalScrollIndicator={false}>
           {renderModalField(
             "Viaje",
             <View style={styles.pickerWrap}>
@@ -877,7 +878,44 @@ const openModal = useCallback((viatico?: Viatico) => {
             "TAG",
             <TextInput value={tag} onChangeText={setTag} keyboardType="numeric" placeholder="0" {...modalInputProps} />
           )}
+          {/* Seccion Otros Gastos */}
+          <View style={styles.modalSection}>
+            <View style={styles.modalSectionHeader}>
+              <View style={styles.modalSectionHeaderLeft}>
+                <FontAwesome5 name="plus-circle" size={14} color="#111111" />
+                <Text style={styles.modalSectionTitle}>Otros Gastos</Text>
+              </View>
+              <TouchableOpacity style={styles.addDieselBtn} onPress={() => {
+                if(!extraDesc || !extraCosto) return;
+                setCostosExtrasList([...costosExtrasList, { description: extraDesc, costo: extraCosto }]);
+                setExtraDesc(""); setExtraCosto("");
+              }} activeOpacity={0.85}>
+                <FontAwesome5 name="plus" size={12} color="#ffffff" />
+              </TouchableOpacity>
+            </View>
 
+            <View style={styles.conceptInputRow}>
+              <View style={{flex: 2, marginRight: 5}}>
+                <TextInput placeholder="Descripción" value={extraDesc} onChangeText={setExtraDesc} {...modalInputProps} />
+              </View>
+              <View style={{flex: 1}}>
+                <TextInput placeholder="Costo" value={extraCosto} onChangeText={setExtraCosto} keyboardType="numeric" {...modalInputProps} />
+              </View>
+            </View>
+
+            {costosExtrasList.length > 0 && (
+              <View style={styles.dieselList}>
+                {costosExtrasList.map((item, index) => (
+                  <View key={index} style={styles.dieselItem}>
+                    <Text style={styles.dieselItemText}>{item.description} · {formatTotal(Number(item.costo))}</Text>
+                    <TouchableOpacity style={[styles.iconAction, styles.iconActionDanger]} onPress={() => setCostosExtrasList(costosExtrasList.filter((_, i) => i !== index))} activeOpacity={0.85}>
+                      <FontAwesome5 name="trash-alt" size={11} color="#dc2626" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
           <View style={styles.totalSummary}>
             <Text style={styles.totalSummaryLabel}>Total estimado</Text>
             <Text style={styles.totalSummaryValue}>{formatTotal(calcularTotal())}</Text>
@@ -923,12 +961,7 @@ const openModal = useCallback((viatico?: Viatico) => {
           <TouchableOpacity style={styles.cancelButton} onPress={closeModal} disabled={saving} activeOpacity={0.85}>
             <Text style={styles.cancelButtonText}>Cancelar</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-            onPress={saveViatico}
-            disabled={saving}
-            activeOpacity={0.85}
-          >
+          <TouchableOpacity style={[styles.saveButton, saving && styles.saveButtonDisabled]}onPress={saveViatico}disabled={saving}activeOpacity={0.85}>
             {saving ? (
               <ActivityIndicator size="small" color="#ffffff" />
             ) : (
@@ -965,12 +998,7 @@ const openModal = useCallback((viatico?: Viatico) => {
                 {filterOptions.map((opt) => {
                   const isActive = filter === opt.value;
                   return (
-                    <TouchableOpacity
-                      key={opt.value}
-                      style={[styles.filterPill, isActive && styles.filterPillActive]}
-                      onPress={() => setFilter(opt.value)}
-                      activeOpacity={0.85}
-                    >
+                    <TouchableOpacity key={opt.value}style={[styles.filterPill, isActive && styles.filterPillActive]}onPress={() => setFilter(opt.value)}activeOpacity={0.85}>
                       <Text style={[styles.filterPillText, isActive && styles.filterPillTextActive]}>
                         {opt.label}
                       </Text>
@@ -1050,459 +1078,113 @@ const openModal = useCallback((viatico?: Viatico) => {
 
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    paddingVertical: 4,
-    backgroundColor: "transparent",
-  },
-  pageHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    marginBottom: 16,
-  },
+  container:{flex: 1,paddingVertical: 4,backgroundColor: "transparent",},
+  pageHeader:{flexDirection: "row",alignItems: "flex-start",justifyContent: "space-between",marginBottom: 16,},
   pageHeaderText: { flex: 1, paddingRight: 12 },
   pageTitle: { fontSize: 24, fontWeight: "800", color: "#111111", letterSpacing: 0.2 },
   subtitle: { fontSize: 13, color: "#6b7280", marginTop: 4 },
-  addButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: "#111111",
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 999,
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const, alignSelf: "flex-start" as const } : {}),
-  },
+  addButton: {flexDirection: "row",alignItems: "center",justifyContent: "center",gap: 8,backgroundColor: "#111111",paddingVertical: 12,paddingHorizontal: 18,borderRadius: 999, ...(Platform.OS === "web" ? { cursor: "pointer" as const, alignSelf: "flex-start" as const } : {}),},
   addButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
-  toolbarPanel: {
-    backgroundColor: "#ffffff",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 14,
-    marginBottom: 14,
-    gap: 12,
-    ...(Platform.OS === "web"
-      ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any }
-      : {}),
-  },
-  toolbarActions: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  toolbarFiltersRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#f3f4f6",
-  },
-  toolbarFiltersRowMobile: {
-    flexDirection: "column",
-    alignItems: "stretch",
-  },
-  filterBlock: { flex: 1, minWidth: 0 },
-  toolbarLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#9ca3af",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 8,
-  },
-  segmentedControl: {
-    flexDirection: "row",
-    alignSelf: "flex-start",
-    backgroundColor: "#f3f4f6",
-    borderRadius: 999,
-    padding: 4,
-    gap: 4,
-  },
-  filterPill: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
+  toolbarPanel: {backgroundColor: "#ffffff",borderRadius: 14,borderWidth: 1,borderColor: "#e5e7eb",padding: 14,marginBottom: 14,gap: 12,...(Platform.OS === "web"  ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any }  : {}), },
+  toolbarActions: {flexDirection: "row",alignItems: "center",},
+  toolbarFiltersRow: {flexDirection: "row",alignItems: "flex-end",justifyContent: "space-between",gap: 12,paddingTop: 12,borderTopWidth: 1,borderTopColor: "#f3f4f6",},
+  toolbarFiltersRowMobile: { flexDirection: "column", alignItems: "stretch", },
+  filterBlock:{flex: 1, minWidth: 0 },
+  toolbarLabel:{fontSize: 11,fontWeight: "700",color: "#9ca3af",textTransform: "uppercase",letterSpacing: 0.5,marginBottom: 8,},
+  segmentedControl:{flexDirection: "row", alignSelf: "flex-start", backgroundColor: "#f3f4f6", borderRadius: 999,padding: 4,gap: 4,},
+  filterPill: {paddingVertical: 8,paddingHorizontal: 16,borderRadius: 999,...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
   filterPillActive: { backgroundColor: "#111111" },
   filterPillText: { fontSize: 12, fontWeight: "700", color: "#6b7280" },
   filterPillTextActive: { color: "#ffffff" },
-  exportButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    borderWidth: 1.5,
-    borderColor: "#111111",
-    backgroundColor: "#ffffff",
-    flexShrink: 0,
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
+  exportButton: { flexDirection: "row",alignItems: "center",gap: 8,paddingVertical: 10,paddingHorizontal: 16,borderRadius: 999,borderWidth: 1.5,borderColor: "#111111",backgroundColor: "#ffffff",flexShrink: 0, ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}), },
   exportButtonText: { color: "#111111", fontWeight: "700", fontSize: 13 },
-  listHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingBottom: 12,
-    marginBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f3f4f6",
-  },
+  listHeader: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",paddingBottom: 12,marginBottom: 12,borderBottomWidth: 1,borderBottomColor: "#f3f4f6",},
   listHeaderTitle: { fontSize: 14, fontWeight: "700", color: "#111111" },
   listHeaderHint: { fontSize: 12, color: "#9ca3af", fontWeight: "600" },
-  listPanel: {
-    backgroundColor: "#ffffff",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 14,
-    flex: 1,
-    ...(Platform.OS === "web"
-      ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any }
-      : {}),
-  },
+  listPanel: {backgroundColor: "#ffffff",borderRadius: 14,borderWidth: 1,borderColor: "#e5e7eb",padding: 14,flex: 1,...(Platform.OS === "web" ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any } : {}),},
   listContent: { paddingBottom: 8, gap: 12 },
   listRow: { gap: 12 },
-  card: {
-    flexDirection: "row",
-    backgroundColor: "#fafafa",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 14,
-    flex: 1,
-    gap: 12,
-  },
+  card: {flexDirection: "row",backgroundColor: "#fafafa",borderRadius: 14,borderWidth: 1,borderColor: "#e5e7eb",padding: 14,flex: 1,gap: 12,},
   cardMobile: { width: "100%" },
   cardDesktop: { minWidth: 0, maxWidth: "49%" as any },
-  cardIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  cardIconWrap: {width: 44,height: 44,borderRadius: 12,backgroundColor: "#ffffff",borderWidth: 1,borderColor: "#e5e7eb",alignItems: "center",justifyContent: "center", },
   cardBody: { flex: 1, minWidth: 0 },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-    marginBottom: 10,
-  },
+  cardHeader: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",gap: 8,marginBottom: 10,},
   cardTitle: { fontSize: 15, fontWeight: "800", color: "#111111", flex: 1 },
-  totalBadge: {
-    backgroundColor: "#111111",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-  },
+  totalBadge: {backgroundColor: "#111111",paddingHorizontal: 10,paddingVertical: 5,borderRadius: 999,},
   totalBadgeText: { color: "#ffffff", fontWeight: "700", fontSize: 11 },
-  specGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 10,
-  },
-  specItem: {
-    minWidth: "46%",
-    flexGrow: 1,
-    backgroundColor: "#ffffff",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  specLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#9ca3af",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
+  specGrid: { flexDirection: "row", flexWrap: "wrap",gap: 8,marginBottom: 10,},
+  specItem: { minWidth: "46%", flexGrow: 1,backgroundColor: "#ffffff",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",paddingHorizontal: 10,paddingVertical: 8,},
+  specLabel: { fontSize: 10, fontWeight: "700",color: "#9ca3af",textTransform: "uppercase",letterSpacing: 0.4,},
   specValue: { fontSize: 13, fontWeight: "600", color: "#111111", marginTop: 2 },
   cardActions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
-  iconAction: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    alignItems: "center",
-    justifyContent: "center",
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
+  iconAction: {width: 36,height: 36,borderRadius: 18,backgroundColor: "#ffffff",borderWidth: 1,borderColor: "#e5e7eb", alignItems: "center", justifyContent: "center", ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
   iconActionDanger: { backgroundColor: "#fef2f2", borderColor: "#fecaca" },
   title: { fontSize: 22, fontWeight: "bold" },
-  emptyState: {
-    paddingVertical: 48,
-    paddingHorizontal: 20,
-    alignItems: "center",
-    gap: 8,
-  },
+  emptyState: { paddingVertical: 48,paddingHorizontal: 20,alignItems: "center",gap: 8,},
   emptyTitle: { fontSize: 16, fontWeight: "700", color: "#111111" },
   emptyText: { fontSize: 14, color: "#64748b", textAlign: "center" },
-  retryButton: {
-    marginTop: 8,
-    backgroundColor: "#111111",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 999,
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
-  retryButtonText: { color: "#fff", fontWeight: "700" },
-  webModalOverlay: {
-    position: "fixed" as any,
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 9999,
-    padding: 20,
-    ...(Platform.OS === "web" ? { cursor: "default" as const } : {}),
-  },
-  modalContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.5)",
-    padding: 16,
-  },
-  modalCard: {
-    width: Platform.OS === "web" ? 860 : "96%",
-    maxHeight: Platform.OS === "web" ? ("90vh" as any) : "92%",
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    ...(Platform.OS === "web"
+  retryButton: { marginTop: 8,backgroundColor: "#111111",paddingHorizontal: 16,paddingVertical: 10,borderRadius: 999,...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
+  retryButtonText:{color: "#fff", fontWeight: "700" },
+  webModalOverlay: {position: "fixed" as any,top: 0,left: 0,right: 0,bottom: 0,backgroundColor: "rgba(0,0,0,0.5)",justifyContent: "center",alignItems: "center",zIndex: 9999,padding: 20,...(Platform.OS === "web" ? { cursor: "default" as const } : {}),}as any,
+  modalContainer: {flex: 1,justifyContent: "center",alignItems: "center",backgroundColor: "rgba(0,0,0,0.5)",padding: 16,},
+  modalCard: { width: Platform.OS === "web" ? 860 : "96%",maxHeight: Platform.OS === "web" ? ("90vh" as any) : "92%", backgroundColor: "#ffffff", borderRadius: 16, overflow: "hidden", borderWidth: 1,borderColor: "#e5e7eb",...(Platform.OS === "web"
       ? { boxShadow: "0 20px 50px rgba(0,0,0,0.18)" as any }
       : {}),
   },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    paddingHorizontal: 22,
-    paddingTop: 22,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f3f4f6",
-  },
-  modalHeaderLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    flex: 1,
-    paddingRight: 12,
-  },
-  modalIconBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#111111",
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  modalHeader: {flexDirection: "row",alignItems: "flex-start",justifyContent: "space-between",paddingHorizontal: 22,paddingTop: 22,paddingBottom: 16,borderBottomWidth: 1,borderBottomColor: "#f3f4f6",},
+  modalHeaderLeft: {flexDirection: "row", alignItems: "center", gap: 12, flex: 1, paddingRight: 12,},
+  modalIconBadge: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#111111", alignItems: "center", justifyContent: "center",},
   modalTitle: { fontSize: 18, fontWeight: "800", color: "#111111" },
   modalSubtitle: { fontSize: 12, color: "#6b7280", marginTop: 2 },
-  modalCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#f3f4f6",
-    alignItems: "center",
-    justifyContent: "center",
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  modalCloseButton: {width: 32,height: 32,borderRadius: 16,backgroundColor: "#f3f4f6", alignItems: "center", justifyContent: "center", ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   modalScroll: { flexGrow: 0, flexShrink: 1 },
   modalScrollContent: { paddingHorizontal: 22, paddingTop: 18, paddingBottom: 24 },
   modalFieldGroup: { marginBottom: 14 },
-  modalFieldLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#374151",
-    marginBottom: 6,
-    letterSpacing: 0.2,
-  },
-  modalInput: {
-    width: "100%",
-    height: 42,
-    backgroundColor: "#fafafa",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
+  modalFieldLabel: { fontSize: 12, fontWeight: "700", color: "#374151", marginBottom: 6, letterSpacing: 0.2, },
+  modalInput: {width: "100%",height: 42,backgroundColor: "#fafafa",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",},
   modalInputContent: { color: "#111111", fontWeight: "600", fontSize: 14 },
-  pickerWrap: {
-    backgroundColor: "#fafafa",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    overflow: "hidden",
-  },
+  pickerWrap: { backgroundColor: "#fafafa",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",overflow: "hidden",},
   picker: { width: "100%", color: "#111111" },
-  modalSectionTitle: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#111111",
-    marginBottom: 12,
-    marginTop: 4,
-    letterSpacing: 0.2,
-  },
-  modalSection: {
-    marginBottom: 16,
-    padding: 14,
-    backgroundColor: "#fafafa",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  modalSectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
+  modalSectionTitle: {fontSize: 13,fontWeight: "800",color: "#111111",marginBottom: 12,marginTop: 4,letterSpacing: 0.2,},
+  modalSection: { marginBottom: 16, padding: 14, backgroundColor: "#fafafa", borderRadius: 12, borderWidth: 1, borderColor: "#e5e7eb", },
+  modalSectionHeader: { flexDirection: "row",
+  alignItems: "center", justifyContent: "space-between",marginBottom: 12,},
   modalSectionHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
-  addDieselBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "#111111",
-    alignItems: "center",
-    justifyContent: "center",
+  addDieselBtn: {width: 28,height: 28,borderRadius: 14,backgroundColor: "#111111",alignItems: "center",justifyContent: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   conceptGrid: { flexDirection: "row", gap: 12, marginBottom: 8 },
   conceptGridMobile: { flexDirection: "column" },
   conceptColumn: { flex: 1, gap: 10 },
-  conceptCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 12,
-    marginBottom: 10,
+  conceptCard: { backgroundColor: "#ffffff",borderRadius: 12,borderWidth: 1,borderColor: "#e5e7eb",padding: 12,marginBottom: 10,
   },
   conceptTitle: { fontSize: 13, fontWeight: "700", color: "#111111", marginBottom: 10 },
   conceptInputRow: { flexDirection: "row", gap: 8 },
   conceptInputHalf: { flex: 1 },
-  conceptInputLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#9ca3af",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-    marginBottom: 4,
-  },
+  conceptInputLabel: {fontSize: 10,fontWeight: "700",color: "#9ca3af",textTransform: "uppercase",letterSpacing: 0.4,marginBottom: 4, },
   dieselList: { marginTop: 12, gap: 8 },
-  dieselItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#ffffff",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
+  dieselItem: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",backgroundColor: "#ffffff",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",paddingHorizontal: 12,paddingVertical: 10,},
   dieselItemText: { flex: 1, fontSize: 13, fontWeight: "600", color: "#374151" },
   dieselItemActions: { flexDirection: "row", gap: 6 },
-  totalSummary: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#111111",
-    borderRadius: 12,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    marginBottom: 16,
-  },
-  totalSummaryLabel: { fontSize: 14, fontWeight: "600", color: "#d1d5db" },
-  totalSummaryValue: { fontSize: 20, fontWeight: "800", color: "#ffffff" },
-  uploadBlock: {
-    alignItems: "center",
-    gap: 10,
-    padding: 16,
-    backgroundColor: "#fafafa",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    borderStyle: "dashed",
-    marginTop: 8,
-  },
+  totalSummary: { flexDirection: "row",alignItems: "center",justifyContent: "space-between",backgroundColor: "#111111",borderRadius: 12, paddingHorizontal: 18, paddingVertical: 14, marginBottom: 16,},
+  totalSummaryLabel:{fontSize: 14, fontWeight: "600", color: "#d1d5db" },
+  totalSummaryValue: {fontSize: 20, fontWeight: "800", color: "#ffffff" },
+  uploadBlock: {alignItems: "center",gap: 10,padding: 16,backgroundColor: "#fafafa",borderRadius: 12,borderWidth: 1,borderColor: "#e5e7eb",borderStyle: "dashed",marginTop: 8,},
   uploadHint: { fontSize: 13, color: "#6b7280", textAlign: "center" },
-  facturaPreview: {
-    width: "100%",
-    height: 180,
-    resizeMode: "contain",
-    borderRadius: 10,
-    backgroundColor: "#f3f4f6",
-    marginBottom: 8,
-  },
+  facturaPreview: {width: "100%",height: 180,resizeMode: "contain",borderRadius: 10,backgroundColor: "#f3f4f6",marginBottom: 8, },
   modalBtnRow: { flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 8 },
-  modalBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    borderWidth: 1.5,
-    borderColor: "#111111",
-    backgroundColor: "#ffffff",
-    alignSelf: "flex-start",
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
+  modalBtn: {paddingVertical: 10,paddingHorizontal: 16,borderRadius: 999,borderWidth: 1.5,borderColor: "#111111",backgroundColor: "#ffffff",alignSelf: "flex-start",...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
   modalBtnPrimary: { backgroundColor: "#111111", borderColor: "#111111" },
   modalBtnDanger: { backgroundColor: "#fef2f2", borderColor: "#fecaca" },
   modalBtnText: { color: "#111111", fontWeight: "700", fontSize: 13 },
   modalBtnTextPrimary: { color: "#ffffff" },
   modalBtnTextDanger: { color: "#dc2626" },
-  modalActions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingHorizontal: 22,
-    paddingTop: 14,
-    paddingBottom: 22,
-    borderTopWidth: 1,
-    borderTopColor: "#f3f4f6",
-  },
-  cancelButton: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-    borderRadius: 999,
-    paddingVertical: 13,
-    alignItems: "center",
-    borderWidth: 1.5,
-    borderColor: "#111111",
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
+  modalActions: {flexDirection: "row",justifyContent: "space-between",gap: 12,paddingHorizontal: 22,paddingTop: 14,paddingBottom: 22,borderTopWidth: 1,borderTopColor: "#f3f4f6",},
+  cancelButton: { flex: 1, backgroundColor: "#ffffff", borderRadius: 999, paddingVertical: 13,alignItems: "center",borderWidth: 1.5,borderColor: "#111111",...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
   cancelButtonText: { color: "#111111", fontWeight: "700", fontSize: 14 },
-  saveButton: {
-    flex: 1,
-    backgroundColor: "#111111",
-    borderRadius: 999,
-    paddingVertical: 13,
-    alignItems: "center",
-    justifyContent: "center",
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
-  },
+  saveButton: {flex: 1,backgroundColor: "#111111",borderRadius: 999,paddingVertical: 13, alignItems: "center", justifyContent: "center", ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
   saveButtonDisabled: { opacity: 0.6 },
   saveButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
 });
