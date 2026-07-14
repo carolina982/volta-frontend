@@ -40,23 +40,38 @@ export default function Dashboard() {
   const [viajesActivos, setViajesActivos] = useState(0);
   const [viaticesPendientes, setViaticesPendientes] = useState(0);
 
+  const isAdmin = currentUser?.rol?.toLowerCase() === "admin";
+
   useEffect(() => {
     const loadCounts = async () => {
       try {
-        const [tripsRes, viaticsRes] = await Promise.all([
-          api.get("/trips"),
-          api.get("/viatics"),
-        ]);
-        const trips = tripsRes.data || [];
-        const viatics = viaticsRes.data || [];
-        setViajesActivos(trips.filter((t: { estado?: string }) => (t.estado || "").toLowerCase() === "pendiente").length);
-        setViaticesPendientes(viatics.filter((v: { estado?: string }) => (v.estado || "").toLowerCase() === "pendiente").length);
+        if (isAdmin) {
+          const [tripsRes, viaticsRes] = await Promise.all([
+            api.get("/trips"),
+            api.get("/viatics"),
+          ]);
+          const trips = tripsRes.data || [];
+          const viatics = viaticsRes.data || [];
+          setViajesActivos(trips.filter((t: { estado?: string }) => (t.estado || "").toLowerCase() === "pendiente").length);
+          setViaticesPendientes(viatics.filter((v: { estado?: string }) => (v.estado || "").toLowerCase() === "pendiente").length);
+        } else {
+          const tripsRes = await api.get("/trips");
+          const trips = tripsRes.data || [];
+          setViajesActivos(trips.filter((t: { estado?: string }) => (t.estado || "").toLowerCase() === "pendiente").length);
+          setViaticesPendientes(0);
+        }
       } catch (error) {
         console.error("Error cargando contadores del menú", error);
       }
     };
     if (currentUser) loadCounts();
-  }, [currentUser, tab]);
+  }, [currentUser, tab, isAdmin]);
+
+  useEffect(() => {
+    if (currentUser && !isAdmin && tab === "Viáticos") {
+      setTab("Inicio");
+    }
+  }, [currentUser, isAdmin, tab]);
 
   if (!currentUser) {
     return (
@@ -87,7 +102,7 @@ export default function Dashboard() {
       case "Viajes":
         return <TripsPage />;
       case "Viáticos":
-        return <ViaticsPage />;
+        return isAdmin ? <ViaticsPage /> : null;
       case "Perfil":
         return <PerfilePage currentUser={currentUser} setCurrentUser={setCurrentUser} />;
       case "Unidades":
@@ -100,10 +115,12 @@ export default function Dashboard() {
   };
 
   // Prioridad 4: Reordenar menú por frecuencia de uso (Inicio > Viajes > Viáticos > Perfil)
-  const menuItems: TabType[] = ["Inicio","Viajes",
-    "Viáticos",
+  const menuItems: TabType[] = [
+    "Inicio",
+    "Viajes",
+    ...(isAdmin ? (["Viáticos"] as TabType[]) : []),
     "Perfil",
-    ...(currentUser.rol?.toLowerCase() === "admin" ? (["Unidades", "Usuarios"] as TabType[]) : []),
+    ...(isAdmin ? (["Unidades", "Usuarios"] as TabType[]) : []),
   ];
 
   const getTabIcon = (item: TabType) => {
@@ -144,19 +161,6 @@ export default function Dashboard() {
                 style={styles.logoImage}
                 resizeMode="contain"
               />
-            </View>
-            <Divider style={styles.divider} />
-
-            <View style={styles.avatarContainer}>
-              {currentUser.photoUrl ? (
-                <Avatar.Image size={48} source={{ uri: currentUser.photoUrl }} />
-              ) : (
-                <Avatar.Text size={48} label={`${currentUser.nombre?.[0] || 'U'}${currentUser.apellido?.[0] || ''}`}  />
-              )}
-              <View style={styles.userInfo}>
-                <Text numberOfLines={1} style={styles.name}>{currentUser.nombre} {currentUser.apellido}</Text>
-                <Text numberOfLines={1} style={styles.role}>{currentUser.rol || currentUser.rol}</Text>
-              </View>
             </View>
             <Divider style={styles.divider} />
 
@@ -219,6 +223,33 @@ export default function Dashboard() {
               <Text style={styles.breadcrumb}>
                 Inicio <Text style={styles.breadcrumbSeparator}>&gt;</Text> <Text style={styles.breadcrumbActive}>{tab}</Text>
               </Text>
+
+              <TouchableOpacity
+                style={styles.headerUserChip}
+                onPress={() => handleTabPress("Perfil")}
+                activeOpacity={0.85}
+                // @ts-ignore
+                title={Platform.OS === "web" ? "Ver perfil" : undefined}
+              >
+                <View style={styles.headerUserText}>
+                  <Text numberOfLines={1} style={styles.headerUserName}>
+                    {currentUser.nombre} {currentUser.apellido}
+                  </Text>
+                  <View style={styles.headerRoleBadge}>
+                    <Text style={styles.headerRoleText}>{currentUser.rol || "Usuario"}</Text>
+                  </View>
+                </View>
+                {currentUser.photoUrl ? (
+                  <Avatar.Image size={40} source={{ uri: currentUser.photoUrl }} />
+                ) : (
+                  <Avatar.Text
+                    size={40}
+                    label={`${currentUser.nombre?.[0] || "U"}${currentUser.apellido?.[0] || ""}`}
+                    style={styles.headerAvatar}
+                    labelStyle={styles.headerAvatarLabel}
+                  />
+                )}
+              </TouchableOpacity>
             </View>
 
             <ScrollView contentContainerStyle={styles.contentContainer}> 
@@ -229,9 +260,25 @@ export default function Dashboard() {
       ) : (
         <>
           {/* ================= HEADER MOVIL ================= */}
-          <Appbar.Header style={{ backgroundColor: "#ffffff", borderBottomWidth: 1, borderBottomColor: "#e5e7eb" }}>
+          <Appbar.Header style={{ backgroundColor: "#ffffff", borderBottomWidth: 1, borderBottomColor: "#e5e7eb", elevation: 0 }}>
             <Appbar.Action icon="menu" onPress={() => setMenuVisible(true)} />
             <Appbar.Content title={tab} titleStyle={{ fontWeight: "bold", fontSize: 18 }} />
+            <TouchableOpacity
+              style={styles.mobileHeaderUser}
+              onPress={() => { handleTabPress("Perfil"); setMenuVisible(false); }}
+              activeOpacity={0.85}
+            >
+              {currentUser.photoUrl ? (
+                <Avatar.Image size={34} source={{ uri: currentUser.photoUrl }} />
+              ) : (
+                <Avatar.Text
+                  size={34}
+                  label={`${currentUser.nombre?.[0] || "U"}${currentUser.apellido?.[0] || ""}`}
+                  style={styles.headerAvatar}
+                  labelStyle={styles.headerAvatarLabel}
+                />
+              )}
+            </TouchableOpacity>
           </Appbar.Header>
 
           {menuVisible && (
@@ -336,14 +383,55 @@ const styles = StyleSheet.create({
 
   /* ===== CONTENIDO DERECHO (WEB) ===== */
   content: { flex: 1, backgroundColor: "#f4f6f9" },
-  webHeader: { height: 60, backgroundColor: "#ffffff", borderBottomWidth: 1, borderBottomColor: "#e2e8f0", justifyContent: "center", paddingHorizontal: 30 },
-  breadcrumb: { fontSize: 14, color: "#64748b", fontWeight: "500" },
+  webHeader: {
+    height: 64,
+    backgroundColor: "#ffffff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+    paddingHorizontal: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+  },
+  breadcrumb: { fontSize: 14, color: "#64748b", fontWeight: "500", flexShrink: 1 },
   breadcrumbSeparator: { color: "#cbd5e1", marginHorizontal: 4 },
-  breadcrumbActive: { color: "#007bff", fontWeight: "600" },
+  breadcrumbActive: { color: "#111111", fontWeight: "700" },
+  headerUserChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 6,
+    paddingLeft: 14,
+    paddingRight: 6,
+    backgroundColor: "#f8fafc",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    maxWidth: 280,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  headerUserText: { flexShrink: 1, alignItems: "flex-end" },
+  headerUserName: { fontSize: 13, fontWeight: "700", color: "#111111", maxWidth: 180 },
+  headerRoleBadge: {
+    marginTop: 3,
+    alignSelf: "flex-end",
+    backgroundColor: "#111111",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  headerRoleText: { fontSize: 10, fontWeight: "700", color: "#ffffff", letterSpacing: 0.3 },
+  headerAvatar: { backgroundColor: "#e5e7eb" },
+  headerAvatarLabel: { color: "#111111", fontWeight: "800", fontSize: 14 },
   contentContainer: { width: "100%", maxWidth: 1200, alignSelf: "center", paddingHorizontal: 30, paddingVertical: 25 },
 
   /* ===== MÓVIL ===== */
   mobileContent: { flex: 1, padding: 20, backgroundColor: "#f4f6f9" },
+  mobileHeaderUser: {
+    marginRight: 10,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
   drawerOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, flexDirection: "row", zIndex: 1000 },
   drawer: { width: 280, backgroundColor: "#fff", paddingHorizontal: 20, paddingTop: 20, paddingBottom: 20, elevation: 16, justifyContent: "space-between" },
   drawerAvatarContainer: { flexDirection: "row", alignItems: "center", marginTop: 10 },

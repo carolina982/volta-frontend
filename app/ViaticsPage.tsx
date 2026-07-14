@@ -21,20 +21,29 @@ interface Trip {
   destino?:string
 };
 
-const conceptosBase = [ "Comidas","Casetas efectivo","DEF"
-];
+const conceptosBase = ["Comidas", "Casetas efectivo", "DEF"];
 
-const preciosFijos:Record<string,number>={
-  comidas:400
+const preciosFijos: Record<string, number> = {
+  comidas: 400,
 };
 
-const conceptosList = conceptosBase.flatMap(c => [
-  `${c} Cantidad`,
-  `${c} Costo`
-]);
+const conceptosList = [
+  "Comidas Cantidad",
+  "Comidas Costo",
+  "Casetas efectivo Cantidad",
+  "Casetas efectivo Costo",
+  "DEF Cantidad",
+];
 
 const createEmptyConceptos = () =>
-  conceptosList.reduce((acc, c) => ({ ...acc, [c]: "" }), {} as { [key: string]: string });
+  ({
+    "Comidas Cantidad": "",
+    "Comidas Costo": "",
+    "Casetas efectivo Cantidad": "",
+    "Casetas efectivo Costo": "",
+    "DEF Cantidad": "",
+    "DEF Costo": "",
+  }) as { [key: string]: string };
 
 const formatNumericField = (value: number | string | undefined | null) => {
   if (value === undefined || value === null || value === "") return "";
@@ -42,12 +51,41 @@ const formatNumericField = (value: number | string | undefined | null) => {
   return num === 0 ? "" : String(value);
 };
 
-const normalizarViaticoParaEditar = (viatico: any, conceptosBaseList: string[]) => {
-  const conceptosPlano: any = {};
-  conceptosBaseList.forEach(base => {
-    conceptosPlano[`${base} Cantidad`] = formatNumericField(viatico.conceptos?.[base]?.cantidad ?? viatico.conceptos?.[`${base} Cantidad`]);
-    conceptosPlano[`${base} Costo`] = formatNumericField(viatico.conceptos?.[base]?.costo ?? viatico.conceptos?.[`${base} Costo`]);
-  });
+const normalizarViaticoParaEditar = (viatico: any, _conceptosBaseList: string[]) => {
+  const conceptosPlano: any = createEmptyConceptos();
+  conceptosPlano["Comidas Cantidad"] = formatNumericField(
+    viatico.conceptos?.["Comidas"]?.cantidad ?? viatico.conceptos?.["Comidas Cantidad"]
+  );
+  conceptosPlano["Comidas Costo"] = formatNumericField(
+    viatico.conceptos?.["Comidas"]?.costo ?? viatico.conceptos?.["Comidas Costo"]
+  );
+  conceptosPlano["Casetas efectivo Cantidad"] = formatNumericField(
+    viatico.conceptos?.["Casetas efectivo"]?.cantidad ?? viatico.conceptos?.["Casetas efectivo Cantidad"]
+  );
+  conceptosPlano["Casetas efectivo Costo"] = formatNumericField(
+    viatico.conceptos?.["Casetas efectivo"]?.costo ?? viatico.conceptos?.["Casetas efectivo Costo"]
+  );
+  conceptosPlano["DEF Cantidad"] = formatNumericField(
+    viatico.conceptos?.["DEF"]?.cantidad ?? viatico.conceptos?.["DEF Cantidad"]
+  );
+  conceptosPlano["DEF Costo"] = "0";
+
+  const extrasRaw = (viatico as any).costosExtras || viatico.conceptos?.["Otros gastos"]?.detalle;
+  let costosExtras: { description: string; costo: string }[] = [];
+  if (Array.isArray(extrasRaw)) {
+    costosExtras = extrasRaw.map((e: any) => ({
+      description: String(e.description || e.descripcion || "Gasto"),
+      costo: formatNumericField(e.costo),
+    }));
+  } else {
+    const otrosCosto = Number(
+      viatico.conceptos?.["Otros gastos"]?.costo ?? viatico.conceptos?.["Otros gastos Costo"] ?? 0
+    );
+    if (otrosCosto > 0) {
+      costosExtras = [{ description: "Otros gastos", costo: String(otrosCosto) }];
+    }
+  }
+
   return {
     ...viatico,
     conceptos: conceptosPlano,
@@ -58,6 +96,7 @@ const normalizarViaticoParaEditar = (viatico: any, conceptosBaseList: string[]) 
         }))
       : [],
     tag: formatNumericField(viatico.tag),
+    costosExtras,
   };
 };
 
@@ -178,6 +217,11 @@ export default function ViaticsPage() {
   }, [currentUser]);
 
   const loadViaticos = useCallback(async () => {
+    if (!isAdmin) {
+      setViaticos([]);
+      setListLoading(false);
+      return;
+    }
     setListLoading(true);
     setLoadError("");
     try {
@@ -191,20 +235,6 @@ export default function ViaticsPage() {
         ? `${BASE_URL.replace("/api", "")}${v.factura}`
         : undefined,
     }));
-
-    if (currentUser?.rol === "Operador") {
-      viaticosData = viaticosData.filter((v: any) => {
-
-        const tripId =
-          typeof v.tripId === "object" && v.tripId !== null
-            ? v.tripId._id
-            : v.tripId;
-
-        const trip = trips.find((t: any) => t.id === tripId);
-
-        return trip?.conductorId === currentUser.id;
-      });
-    }
 
     // Filtrar conductor
     if (conductorFilter) {
@@ -279,7 +309,7 @@ export default function ViaticsPage() {
   } finally {
     setListLoading(false);
   }
-}, [filter, conductorFilter, trips, currentUser]);
+}, [filter, conductorFilter, trips, currentUser, isAdmin]);
 
   useEffect(() => {
     if (currentUser) loadTrips();
@@ -290,27 +320,37 @@ export default function ViaticsPage() {
   }, [currentUser, loadViaticos]);
 
   const calcularTotal = () => {
-  let total = 0;
-  conceptosBase.forEach(base =>{
-    const cantidad = Number(conceptos[`${base} Cantidad`] || 0);
-    if (base === "Comidas"){
-      total += cantidad * 400;
-    } else {
-      const costo = Number(conceptos[`${base} Costo`] || 0);
-      total += cantidad * costo;
-    }
-  });
-  dieselHistorial.forEach(c => {
-    total += Number(c.costo || 0);
-  });
-  costosExtrasList.forEach(e => {
-    total += Number(e.costo || 0); // Solo suma el costo, no lo multipliques
-  });
+    let total = 0;
 
-  total += Number(tag || 0);
-  
-  return total;
-};
+    // Comidas: cantidad × precio fijo
+    total += Number(conceptos["Comidas Cantidad"] || 0) * preciosFijos.comidas;
+
+    // Casetas efectivo + TAG (se suman)
+    total += Number(conceptos["Casetas efectivo Costo"] || 0);
+    total += Number(tag || 0);
+
+    // Diesel: suma de costos del historial
+    dieselHistorial.forEach((c) => {
+      total += Number(c.costo || 0);
+    });
+
+    // Otros gastos: suma de costos
+    costosExtrasList.forEach((e) => {
+      total += Number(e.costo || 0);
+    });
+
+    // DEF solo cantidad (no suma a dinero)
+    return total;
+  };
+
+  const totalCasetasYTag =
+    Number(conceptos["Casetas efectivo Costo"] || 0) + Number(tag || 0);
+
+  const totalDiesel =
+    dieselHistorial.reduce((acc, item) => acc + Number(item.costo || 0), 0);
+
+  const totalOtros =
+    costosExtrasList.reduce((acc, item) => acc + Number(item.costo || 0), 0);
 
   //exportacion  excel 
 const exportViaticosToExcel =async ()=>{
@@ -478,6 +518,7 @@ const openModal = useCallback((viatico?: Viatico) => {
     setConceptos(normalized.conceptos);
     setDieselHistorial(normalized.dieselHistorial);
     setTag(normalized.tag);
+    setCostosExtrasList(normalized.costosExtras || []);
     setFactura(viatico.facturaUrl || null);
   } else {
     setEditingViatico(null);
@@ -489,6 +530,9 @@ const openModal = useCallback((viatico?: Viatico) => {
     setDieselCargas("");
     setDieselCosto("");
     setCasetaFoto(null);
+    setCostosExtrasList([]);
+    setExtraDesc("");
+    setExtraCosto("");
   }
   setFacturaRemoved(false);
   setCasetaFotoRemoved(false);
@@ -537,21 +581,57 @@ const openModal = useCallback((viatico?: Viatico) => {
   try {
     const formData = new FormData();
     formData.append("tripId", tripId);
-    const conceptosFinal :any={};
-    conceptosBase.forEach(base=>{
-      conceptosFinal[base]={
-        cantidad:Number(conceptos[`${base} Cantidad`] || 0),
-        costo:Number(conceptos[`${base} Costo`] || 0),
-      };
-    });
-    formData.append("conceptos",JSON.stringify(conceptosFinal));
-    const dieselCargasTotal = dieselHistorial.length;
+    const conceptosFinal: any = {
+      Comidas: {
+        cantidad: Number(conceptos["Comidas Cantidad"] || 0),
+        costo: Number(conceptos["Comidas Cantidad"] || 0) * preciosFijos.comidas,
+      },
+      "Casetas efectivo": {
+        cantidad: Number(conceptos["Casetas efectivo Cantidad"] || 0),
+        costo: Number(conceptos["Casetas efectivo Costo"] || 0),
+      },
+      DEF: {
+        cantidad: Number(conceptos["DEF Cantidad"] || 0),
+        costo: 0,
+      },
+      "Otros gastos": {
+        cantidad: costosExtrasList.length,
+        costo: costosExtrasList.reduce((acc, e) => acc + Number(e.costo || 0), 0),
+        detalle: costosExtrasList.map((e) => ({
+          description: e.description,
+          costo: Number(e.costo || 0),
+        })),
+      },
+    };
+    formData.append("conceptos", JSON.stringify(conceptosFinal));
+    formData.append(
+      "costosExtras",
+      JSON.stringify(
+        costosExtrasList.map((e) => ({
+          description: e.description,
+          costo: Number(e.costo || 0),
+        }))
+      )
+    );
+    const dieselCargasTotal = dieselHistorial.reduce(
+      (acc, d) => acc + Number(d.cantidad || 0),
+      0
+    );
     const dieselCostoTotal = dieselHistorial.reduce(
-      (acc, d) => acc + Number(d.costo || 0),0 );
-    formData.append("dieselCargas",String(dieselCargasTotal));
+      (acc, d) => acc + Number(d.costo || 0),
+      0
+    );
+    formData.append("dieselCargas", String(dieselCargasTotal));
     formData.append("dieselCosto", String(dieselCostoTotal));
-    formData.append("dieselHistorial",JSON.stringify(dieselHistorial.map(d=>({cargas:Number(d.cantidad || 0),costo:Number(d.costo|| 0),}))
-  ));
+    formData.append(
+      "dieselHistorial",
+      JSON.stringify(
+        dieselHistorial.map((d) => ({
+          cargas: Number(d.cantidad || 0),
+          costo: Number(d.costo || 0),
+        }))
+      )
+    );
     formData.append("tag", String(Number(tag || 0)));
     formData.append("total", String(calcularTotal()));
     if (factura) {
@@ -657,8 +737,17 @@ const openModal = useCallback((viatico?: Viatico) => {
               </Text>
             </View>
             <View style={styles.specItem}>
-              <Text style={styles.specLabel}>TAG</Text>
-              <Text style={styles.specValue}>{formatTotal(item.tag)}</Text>
+              <Text style={styles.specLabel}>Casetas + TAG</Text>
+              <Text style={styles.specValue}>
+                {formatTotal(
+                  Number(item.tag || 0) +
+                    Number(
+                      (item as any).conceptos?.["Casetas efectivo"]?.costo ??
+                        (item as any).conceptos?.["Casetas efectivo Costo"] ??
+                        0
+                    )
+                )}
+              </Text>
             </View>
             <View style={styles.specItem}>
               <Text style={styles.specLabel}>Factura</Text>
@@ -685,7 +774,7 @@ const openModal = useCallback((viatico?: Viatico) => {
 
   const comidasCostoCalculado = (() => {
     const cantidad = Number(conceptos["Comidas Cantidad"] || 0);
-    return cantidad > 0 ? String(cantidad * 400) : "";
+    return cantidad > 0 ? String(cantidad * preciosFijos.comidas) : "";
   })();
 
   const modalInputProps = {
@@ -731,54 +820,10 @@ const openModal = useCallback((viatico?: Viatico) => {
     </TouchableOpacity>
   );
 
-  const filteredConceptos = conceptosBase.filter((b) => b !== "Comidas" && (isAdmin || b !== "Comisiones"));
-  const conceptMid = Math.ceil(filteredConceptos.length / 2);
-  const leftConceptos = ["Comidas", ...filteredConceptos.slice(0, conceptMid)];
-  const rightConceptos = filteredConceptos.slice(conceptMid);
-
-  const renderConceptBlock = (base: string) => (
-    <View key={base} style={styles.conceptCard}>
-      <Text style={styles.conceptTitle}>{base}</Text>
-      <View style={styles.conceptInputRow}>
-        <View style={styles.conceptInputHalf}>
-          <Text style={styles.conceptInputLabel}>Días</Text>
-          <TextInput
-            value={conceptos[`${base} Cantidad`]}
-            onChangeText={(t) => setConceptos({ ...conceptos, [`${base} Cantidad`]: t })}
-            keyboardType="numeric"
-            placeholder="0"
-            {...modalInputProps}
-          />
-        </View>
-        <View style={styles.conceptInputHalf}>
-          <Text style={styles.conceptInputLabel}>Costo</Text>
-          <TextInput
-            value={base === "Comidas" ? comidasCostoCalculado : conceptos[`${base} Costo`]}
-            onChangeText={(t) => setConceptos({ ...conceptos, [`${base} Costo`]: t })}
-            keyboardType="numeric"
-            placeholder="0"
-            editable={base !== "Comidas"}
-            {...modalInputProps}
-          />
-        </View>
-      </View>
-
-      {base === "Casetas efectivo" && (
-        <View style={styles.uploadBlock}>
-          <Text style={styles.conceptInputLabel}>Comprobante caseta</Text>
-          {casetaFoto ? (
-            <>
-              <Image source={{ uri: casetaFoto }} style={styles.facturaPreview} />
-              <View style={styles.modalBtnRow}>
-                {renderModalBtn("Reemplazar", pickCasetaFoto)}
-                {renderModalBtn("Eliminar", () => { setCasetaFoto(null); setCasetaFotoRemoved(true); }, "danger")}
-              </View>
-            </>
-          ) : (
-            renderModalBtn("Subir foto", pickCasetaFoto, "primary")
-          )}
-        </View>
-      )}
+  const renderMiniTotal = (label: string, value: number) => (
+    <View style={styles.miniTotalRow}>
+      <Text style={styles.miniTotalLabel}>{label}</Text>
+      <Text style={styles.miniTotalValue}>{formatTotal(value)}</Text>
     </View>
   );
 
@@ -808,7 +853,14 @@ const openModal = useCallback((viatico?: Viatico) => {
           </TouchableOpacity>
         </View>
 
-        <KeyboardAwareScrollView  enableOnAndroid extraScrollHeight={120}keyboardShouldPersistTaps="handled"style={styles.modalScroll}contentContainerStyle={styles.modalScrollContent}showsVerticalScrollIndicator={false}>
+        <KeyboardAwareScrollView
+          enableOnAndroid
+          extraScrollHeight={120}
+          keyboardShouldPersistTaps="handled"
+          style={styles.modalScroll}
+          contentContainerStyle={styles.modalScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
           {renderModalField(
             "Viaje",
             <View style={styles.pickerWrap}>
@@ -827,10 +879,85 @@ const openModal = useCallback((viatico?: Viatico) => {
 
           <Text style={styles.modalSectionTitle}>Conceptos de gasto</Text>
           <View style={[styles.conceptGrid, isMobile && styles.conceptGridMobile]}>
-            <View style={styles.conceptColumn}>{leftConceptos.map(renderConceptBlock)}</View>
-            <View style={styles.conceptColumn}>{rightConceptos.map(renderConceptBlock)}</View>
+            {/* Comidas */}
+            <View style={styles.conceptCard}>
+              <Text style={styles.conceptTitle}>Comidas</Text>
+              <View style={styles.conceptInputRow}>
+                <View style={styles.conceptInputHalf}>
+                  <Text style={styles.conceptInputLabel}>Días</Text>
+                  <TextInput
+                    value={conceptos["Comidas Cantidad"]}
+                    onChangeText={(t) => setConceptos({ ...conceptos, "Comidas Cantidad": t })}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    {...modalInputProps}
+                  />
+                </View>
+                <View style={styles.conceptInputHalf}>
+                  <Text style={styles.conceptInputLabel}>Costo ($400/día)</Text>
+                  <TextInput value={comidasCostoCalculado} editable={false} placeholder="0" {...modalInputProps} />
+                </View>
+              </View>
+            </View>
+
+            {/* DEF solo cantidad */}
+            <View style={styles.conceptCard}>
+              <Text style={styles.conceptTitle}>DEF</Text>
+              <Text style={styles.conceptHint}>Solo registra la cantidad</Text>
+              <Text style={styles.conceptInputLabel}>Cantidad</Text>
+              <TextInput
+                value={conceptos["DEF Cantidad"]}
+                onChangeText={(t) => setConceptos({ ...conceptos, "DEF Cantidad": t })}
+                keyboardType="numeric"
+                placeholder="0"
+                {...modalInputProps}
+              />
+            </View>
           </View>
 
+          {/* Casetas + TAG (suma) */}
+          <View style={styles.modalSection}>
+            <View style={styles.modalSectionHeader}>
+              <View style={styles.modalSectionHeaderLeft}>
+                <FontAwesome5 name="road" size={14} color="#111111" />
+                <Text style={styles.modalSectionTitle}>Casetas y TAG</Text>
+              </View>
+            </View>
+            <Text style={styles.conceptHint}>Los montos de caseta efectivo y TAG se suman automáticamente</Text>
+            <View style={styles.conceptInputRow}>
+              <View style={styles.conceptInputHalf}>
+                <Text style={styles.conceptInputLabel}>Caseta efectivo</Text>
+                <TextInput
+                  value={conceptos["Casetas efectivo Costo"]}
+                  onChangeText={(t) => setConceptos({ ...conceptos, "Casetas efectivo Costo": t })}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  {...modalInputProps}
+                />
+              </View>
+              <View style={styles.conceptInputHalf}>
+                <Text style={styles.conceptInputLabel}>TAG</Text>
+                <TextInput value={tag} onChangeText={setTag} keyboardType="numeric" placeholder="0" {...modalInputProps} />
+              </View>
+            </View>
+            <View style={styles.uploadBlock}>
+              <Text style={styles.conceptInputLabel}>Comprobante caseta</Text>
+              {casetaFoto ? (
+                <>
+                  <Image source={{ uri: casetaFoto }} style={styles.facturaPreview} />
+                  <View style={styles.modalBtnRow}>
+                    {renderModalBtn("Reemplazar", pickCasetaFoto)}
+                    {renderModalBtn("Eliminar", () => { setCasetaFoto(null); setCasetaFotoRemoved(true); }, "danger")}
+                  </View>
+                </>
+              ) : (
+                renderModalBtn("Subir foto", pickCasetaFoto, "primary")
+              )}
+            </View>
+            {renderMiniTotal("Suma casetas + TAG", totalCasetasYTag)}
+          </View>
+
+          {/* Diesel - suma costos */}
           <View style={styles.modalSection}>
             <View style={styles.modalSectionHeader}>
               <View style={styles.modalSectionHeaderLeft}>
@@ -841,6 +968,7 @@ const openModal = useCallback((viatico?: Viatico) => {
                 <FontAwesome5 name="plus" size={12} color="#ffffff" />
               </TouchableOpacity>
             </View>
+            <Text style={styles.conceptHint}>Agrega cada carga; el total suma automáticamente los costos</Text>
 
             <View style={styles.conceptInputRow}>
               <View style={styles.conceptInputHalf}>
@@ -872,34 +1000,39 @@ const openModal = useCallback((viatico?: Viatico) => {
                 ))}
               </View>
             )}
+            {renderMiniTotal("Total diesel", totalDiesel)}
           </View>
 
-          {renderModalField(
-            "TAG",
-            <TextInput value={tag} onChangeText={setTag} keyboardType="numeric" placeholder="0" {...modalInputProps} />
-          )}
-          {/* Seccion Otros Gastos */}
+          {/* Otros gastos */}
           <View style={styles.modalSection}>
             <View style={styles.modalSectionHeader}>
               <View style={styles.modalSectionHeaderLeft}>
                 <FontAwesome5 name="plus-circle" size={14} color="#111111" />
-                <Text style={styles.modalSectionTitle}>Otros Gastos</Text>
+                <Text style={styles.modalSectionTitle}>Otros gastos</Text>
               </View>
-              <TouchableOpacity style={styles.addDieselBtn} onPress={() => {
-                if(!extraDesc || !extraCosto) return;
-                setCostosExtrasList([...costosExtrasList, { description: extraDesc, costo: extraCosto }]);
-                setExtraDesc(""); setExtraCosto("");
-              }} activeOpacity={0.85}>
+              <TouchableOpacity
+                style={styles.addDieselBtn}
+                onPress={() => {
+                  if (!extraDesc.trim() || !extraCosto) return;
+                  setCostosExtrasList([...costosExtrasList, { description: extraDesc.trim(), costo: extraCosto }]);
+                  setExtraDesc("");
+                  setExtraCosto("");
+                }}
+                activeOpacity={0.85}
+              >
                 <FontAwesome5 name="plus" size={12} color="#ffffff" />
               </TouchableOpacity>
             </View>
+            <Text style={styles.conceptHint}>Gastos adicionales aparte de los conceptos anteriores</Text>
 
             <View style={styles.conceptInputRow}>
-              <View style={{flex: 2, marginRight: 5}}>
-                <TextInput placeholder="Descripción" value={extraDesc} onChangeText={setExtraDesc} {...modalInputProps} />
+              <View style={{ flex: 2, marginRight: 8 }}>
+                <Text style={styles.conceptInputLabel}>Descripción</Text>
+                <TextInput placeholder="Ej. Estacionamiento" value={extraDesc} onChangeText={setExtraDesc} {...modalInputProps} />
               </View>
-              <View style={{flex: 1}}>
-                <TextInput placeholder="Costo" value={extraCosto} onChangeText={setExtraCosto} keyboardType="numeric" {...modalInputProps} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.conceptInputLabel}>Costo</Text>
+                <TextInput placeholder="0" value={extraCosto} onChangeText={setExtraCosto} keyboardType="numeric" {...modalInputProps} />
               </View>
             </View>
 
@@ -908,14 +1041,20 @@ const openModal = useCallback((viatico?: Viatico) => {
                 {costosExtrasList.map((item, index) => (
                   <View key={index} style={styles.dieselItem}>
                     <Text style={styles.dieselItemText}>{item.description} · {formatTotal(Number(item.costo))}</Text>
-                    <TouchableOpacity style={[styles.iconAction, styles.iconActionDanger]} onPress={() => setCostosExtrasList(costosExtrasList.filter((_, i) => i !== index))} activeOpacity={0.85}>
+                    <TouchableOpacity
+                      style={[styles.iconAction, styles.iconActionDanger]}
+                      onPress={() => setCostosExtrasList(costosExtrasList.filter((_, i) => i !== index))}
+                      activeOpacity={0.85}
+                    >
                       <FontAwesome5 name="trash-alt" size={11} color="#dc2626" />
                     </TouchableOpacity>
                   </View>
                 ))}
               </View>
             )}
+            {renderMiniTotal("Total otros gastos", totalOtros)}
           </View>
+
           <View style={styles.totalSummary}>
             <Text style={styles.totalSummaryLabel}>Total estimado</Text>
             <Text style={styles.totalSummaryValue}>{formatTotal(calcularTotal())}</Text>
@@ -969,6 +1108,20 @@ const openModal = useCallback((viatico?: Viatico) => {
             )}
           </TouchableOpacity>
         </View>
+      </View>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#f4f6f9", padding: 24 }}>
+        <FontAwesome5 name="lock" size={28} color="#9ca3af" />
+        <Text style={{ marginTop: 12, fontSize: 16, fontWeight: "700", color: "#111111", textAlign: "center" }}>
+          Acceso restringido
+        </Text>
+        <Text style={{ marginTop: 6, fontSize: 13, color: "#6b7280", textAlign: "center" }}>
+          Los operadores no pueden ver ni gestionar viáticos.
+        </Text>
       </View>
     );
   }
@@ -1043,16 +1196,7 @@ const openModal = useCallback((viatico?: Viatico) => {
             <Text style={styles.emptyText}>Pulsa "Nuevo Viático" para crear el primero.</Text>
           </View>
         ) : (
-          <FlatList
-            data={viaticos}
-            keyExtractor={(item) => item.id}
-            renderItem={renderItem}
-            contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
-            numColumns={isMobile ? 1 : 2}
-            columnWrapperStyle={isMobile ? undefined : styles.listRow}
-            scrollEnabled={false}
-          />
+          <FlatList data={viaticos} keyExtractor={(item) => item.id} renderItem={renderItem} contentContainerStyle={styles.listContent}showsVerticalScrollIndicator={false}numColumns={isMobile ? 1 : 2} columnWrapperStyle={isMobile ? undefined : styles.listRow}scrollEnabled={false} />
         )}
       </View>
 
@@ -1161,9 +1305,21 @@ const styles = StyleSheet.create({
   conceptCard: { backgroundColor: "#ffffff",borderRadius: 12,borderWidth: 1,borderColor: "#e5e7eb",padding: 12,marginBottom: 10,
   },
   conceptTitle: { fontSize: 13, fontWeight: "700", color: "#111111", marginBottom: 10 },
+  conceptHint: { fontSize: 12, color: "#6b7280", marginBottom: 10, lineHeight: 16 },
   conceptInputRow: { flexDirection: "row", gap: 8 },
   conceptInputHalf: { flex: 1 },
   conceptInputLabel: {fontSize: 10,fontWeight: "700",color: "#9ca3af",textTransform: "uppercase",letterSpacing: 0.4,marginBottom: 4, },
+  miniTotalRow: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  miniTotalLabel: { fontSize: 12, fontWeight: "700", color: "#6b7280" },
+  miniTotalValue: { fontSize: 14, fontWeight: "800", color: "#111111" },
   dieselList: { marginTop: 12, gap: 8 },
   dieselItem: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",backgroundColor: "#ffffff",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",paddingHorizontal: 12,paddingVertical: 10,},
   dieselItemText: { flex: 1, fontSize: 13, fontWeight: "600", color: "#374151" },

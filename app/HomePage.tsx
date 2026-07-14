@@ -108,13 +108,20 @@ const loadAnnouncements = async () => {
 
 const loadStatus = async () => {
     try {
-      const [v, m, u] = await Promise.all([
-        api.get("/trips/count"),
-        api.get("/viatics/count"),
-        api.get("/units/count"),
-      ]);
-
-      setStatus({ viajes: v.data.count, viaticos: m.data.count, unidades: u.data.count });
+      if (isAdmin) {
+        const [v, m, u] = await Promise.all([
+          api.get("/trips/count"),
+          api.get("/viatics/count"),
+          api.get("/units/count"),
+        ]);
+        setStatus({ viajes: v.data.count, viaticos: m.data.count, unidades: u.data.count });
+      } else {
+        const [v, u] = await Promise.all([
+          api.get("/trips/count"),
+          api.get("/units/count"),
+        ]);
+        setStatus({ viajes: v.data.count, viaticos: 0, unidades: u.data.count });
+      }
     } catch (e: unknown) {
       
       if (e && typeof e === 'object' && 'response' in e) {
@@ -454,11 +461,13 @@ const loadStatus = async () => {
             <Text style={styles.statVal}>{status.viajes}</Text>
             <Text style={styles.statLabel}>Viajes</Text>
           </View>
-          <View style={styles.statCard}>
-            <FontAwesome5 name="wallet" size={14} color="#111111" />
-            <Text style={styles.statVal}>{status.viaticos}</Text>
-            <Text style={styles.statLabel}>Viáticos</Text>
-          </View>
+          {isAdmin && (
+            <View style={styles.statCard}>
+              <FontAwesome5 name="wallet" size={14} color="#111111" />
+              <Text style={styles.statVal}>{status.viaticos}</Text>
+              <Text style={styles.statLabel}>Viáticos</Text>
+            </View>
+          )}
           <View style={styles.statCard}>
             <FontAwesome5 name="truck" size={14} color="#111111" />
             <Text style={styles.statVal}>{status.unidades}</Text>
