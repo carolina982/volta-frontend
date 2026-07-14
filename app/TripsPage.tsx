@@ -1,13 +1,21 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { Picker } from '@react-native-picker/picker';
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Portal, TextInput } from "react-native-paper";
 import * as XLSX from "xlsx";
 import { useStore } from "../context/Store";
 import { api } from "../services/api";
+
+type SelectOption = { label: string; value: string };
+type SelectSheetState = {
+  title: string;
+  value: string;
+  options: SelectOption[];
+  placeholder: string;
+  onChange: (value: string) => void;
+};
 
 interface KilometrajeRegistro {
   km: string;
@@ -94,6 +102,12 @@ const combineDateTime = (dateStr: string, timeStr: string): Date | null => {
   return new Date(year, month - 1, day, hours, minutes, 0);
 };
 
+const toInputDateValue = (dateStr: string) => {
+  const d = combineDateTime(dateStr, "");
+  if (!d) return "";
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+};
+
 const formatDuration = (ms: number): string => {
   if (!Number.isFinite(ms) || ms < 0) return "—";
   const totalMinutes = Math.floor(ms / 60000);
@@ -163,6 +177,85 @@ const formatDateTimeLabel = (value?: string | null) => {
   return date.toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
 };
 
+const formatExcelDateTime = (value?: string | null) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
+};
+
+/** Filtra por día / semana (lun–dom) / mes actual según fecha de salida. */
+const isTripInExportPeriod = (trip: { fechaSalida?: string }, exportType: string) => {
+  if (!trip.fechaSalida) return false;
+  const date = new Date(trip.fechaSalida);
+  if (Number.isNaN(date.getTime())) return false;
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (exportType === "dia") {
+    return date >= startOfToday;
+  }
+  if (exportType === "semana") {
+    const weekday = startOfToday.getDay();
+    const mondayOffset = weekday === 0 ? -6 : 1 - weekday;
+    const startOfWeek = new Date(startOfToday);
+    startOfWeek.setDate(startOfToday.getDate() + mondayOffset);
+    return date >= startOfWeek;
+  }
+  // mes
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  return date >= startOfMonth;
+};
+
+const downloadExcelFile = async (wb: XLSX.WorkBook, filename: string) => {
+  if (Platform.OS === "web") {
+    const excelBuffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([excelBuffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    // En móvil (Safari/Chrome) el <a download> falla a menudo; preferir compartir archivo.
+    const nav = typeof navigator !== "undefined" ? (navigator as any) : null;
+    if (nav?.share && typeof File !== "undefined") {
+      try {
+        const file = new File([blob], filename, { type: blob.type });
+        if (!nav.canShare || nav.canShare({ files: [file] })) {
+          await nav.share({ files: [file], title: filename });
+          return;
+        }
+      } catch {
+        // Usuario canceló o share no disponible → descarga clásica
+      }
+    }
+
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 800);
+    return;
+  }
+
+  const base64 = XLSX.write(wb, { bookType: "xlsx", type: "base64" });
+  const FileSystem = (await import("expo-file-system/legacy")).default;
+  const Sharing = await import("expo-sharing");
+  const fileUri = `${(FileSystem as any).documentDirectory}${filename}`;
+  await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: "base64" });
+  if (!(await Sharing.isAvailableAsync())) {
+    throw new Error("sharing_unavailable");
+  }
+  await Sharing.shareAsync(fileUri, {
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    dialogTitle: "Compartir reporte Excel",
+    UTI: "com.microsoft.excel.xlsx",
+  });
+};
+
 const buildTiempoTrayecto = (
   salida: Date | null,
   llegada: Date | null,
@@ -226,7 +319,28 @@ const exportOptions: { value: string; label: string }[] = [
 export default function TripsPage() {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    Platform.OS === "web" && typeof window !== "undefined"
+      ? window.visualViewport?.width || window.innerWidth
+      : width
+  );
+  // En web el preview/iframe a veces reporta ancho de desktop; compactamos por viewport real
+  const isCompactModal = isMobile || viewportWidth < 900;
   const { currentUser } = useStore();
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    const syncViewport = () => {
+      setViewportWidth(window.visualViewport?.width || window.innerWidth || width);
+    };
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    window.visualViewport?.addEventListener("resize", syncViewport);
+    return () => {
+      window.removeEventListener("resize", syncViewport);
+      window.visualViewport?.removeEventListener("resize", syncViewport);
+    };
+  }, [width]);
   
   const [trips, setTrips] = useState<Trip[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -267,6 +381,7 @@ export default function TripsPage() {
     field: "salidaDate" | "salidaTime" | "llegadaDate" | "llegadaTime";
   } | null>(null);
   const [multiLiveTick, setMultiLiveTick] = useState(0);
+  const [selectSheet, setSelectSheet] = useState<SelectSheetState | null>(null);
 
   const isAdmin = currentUser?.rol?.toLowerCase() === "admin";
   const isOperador = !isAdmin;
@@ -341,7 +456,10 @@ export default function TripsPage() {
     return buildTiempoTrayecto(s, l, elapsed);
   };
 
-  const closeModal = useCallback(() => setModalVisible(false), []);
+  const closeModal = useCallback(() => {
+    setSelectSheet(null);
+    setModalVisible(false);
+  }, []);
 
   const loadTrips = useCallback(async () => {
     if (!currentUser) return;
@@ -828,43 +946,71 @@ const deleteTrip = async (id: string) => {
   }
 };
 
+  const resolveUserName = useCallback(
+    (rawId: any) => {
+      const sid = String(typeof rawId === "object" && rawId ? rawId._id : rawId || "");
+      if (!sid || sid === "none") return "";
+      const user = users.find((u) => String(u.id) === sid);
+      if (!user) return "";
+      return [user.nombre, user.apellido].filter(Boolean).join(" ").trim();
+    },
+    [users]
+  );
+
   const exportToExcel = async () => {
-    if (trips.length === 0) {
-      Alert.alert("Sin datos", "No hay viajes para exportar.");
+    const periodTrips = trips.filter((t) => isTripInExportPeriod(t, exportType));
+    if (periodTrips.length === 0) {
+      Alert.alert(
+        "Sin datos",
+        `No hay viajes en el periodo "${exportOptions.find((o) => o.value === exportType)?.label || exportType}".`
+      );
       return;
     }
 
     try {
-      const rows = trips.map((t) => ({
-        Ruta: t.rutaAcubrir ?? "",
-        Destino: t.destino ?? "",
-        Salida: t.fechaSalida ? new Date(t.fechaSalida).toLocaleDateString("es-ES") : "",
-        Llegada: t.fechaLlegada ? new Date(t.fechaLlegada).toLocaleDateString("es-ES") : "",
-        Estado: t.estado ?? "",
-        Conductor: users.find((u) => u.id === (typeof t.conductorId === "object" ? t.conductorId._id : t.conductorId))?.nombre ?? "",
-      }));
+      const rows = periodTrips.map((t) => {
+        const conductorIdVal =
+          typeof t.conductorId === "object" ? t.conductorId._id : t.conductorId;
+        const extras = normalizeDestinosExtrasList(t.destinoExtra);
+        const unit = units.find((u) => String(u.id) === String(t.unidadId));
+        return {
+          Ruta: t.rutaAcubrir ?? "",
+          Destino: t.destino ?? "",
+          Salida: formatExcelDateTime(t.fechaSalida),
+          Llegada: formatExcelDateTime(t.fechaLlegada),
+          Estado: t.estado ?? "",
+          Operador: resolveUserName(conductorIdVal),
+          Acompañante: resolveUserName(t.acompanante) || "Sin acompañante",
+          Multidestino: t.multidestino ? "Sí" : "No",
+          "Destinos extras": extras.map((d) => d.destino || "Sin nombre").join(" | "),
+          Unidad: unit ? formatUnitLabel(unit) : t.unidadId || "",
+        };
+      });
 
+      const headers = Object.keys(rows[0]);
       const ws = XLSX.utils.json_to_sheet(rows);
+      ws["!cols"] = headers.map((key) => {
+        const maxCell = Math.max(
+          key.length,
+          ...rows.map((r) => String((r as any)[key] ?? "").length)
+        );
+        return { wch: Math.max(12, Math.min(42, maxCell + 2)) };
+      });
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Viajes");
 
-      if (Platform.OS === "web") {
-        const excelBuffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-        const blob = new Blob([excelBuffer], {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "Reporte_Viajes.xlsx";
-        a.click();
-        window.URL.revokeObjectURL(url);
-      }
+      const periodLabel = exportOptions.find((o) => o.value === exportType)?.label || exportType;
+      const stamp = new Date().toISOString().slice(0, 10);
+      await downloadExcelFile(wb, `Reporte_Viajes_${periodLabel}_${stamp}.xlsx`);
 
-      Alert.alert("Éxito", "Reporte Excel generado correctamente");
-    } catch (error) {
+      Alert.alert("Éxito", `Excel generado (${periodTrips.length} viaje${periodTrips.length === 1 ? "" : "s"}).`);
+    } catch (error: any) {
       console.error("Error exportando Excel", error);
-      Alert.alert("Error", "No se pudo generar el archivo Excel");
+      if (error?.message === "sharing_unavailable") {
+        Alert.alert("Error", "No se puede compartir el archivo en este dispositivo");
+      } else {
+        Alert.alert("Error", "No se pudo generar el archivo Excel");
+      }
     }
   };
 
@@ -890,42 +1036,63 @@ const deleteTrip = async (id: string) => {
 
     if (estado === "completado") {
       return (
-        <Text style={styles.operadorDoneHint}>Viaje completado</Text>
+        <View style={styles.operadorDoneBox}>
+          <FontAwesome5 name="check-circle" size={14} color="#059669" />
+          <Text style={styles.operadorDoneHint}>Viaje completado</Text>
+        </View>
       );
     }
 
     return (
-      <View style={[styles.operadorActionsRow, compact && styles.operadorActionsRowCompact]}>
+      <View
+        style={[
+          styles.operadorActionsRow,
+          compact && styles.operadorActionsRowCompact,
+          isMobile && styles.operadorActionsRowMobile,
+        ]}
+      >
         {canIniciar && (
           <TouchableOpacity
-            style={[styles.operadorActionBtn, styles.operadorActionPrimary]}
+            style={[
+              styles.operadorActionBtn,
+              styles.operadorActionPrimary,
+              isMobile && styles.operadorActionBtnMobile,
+            ]}
             onPress={() => iniciarViaje(trip)}
             disabled={saving}
             activeOpacity={0.85}
           >
-            <FontAwesome5 name="play" size={11} color="#ffffff" />
+            <FontAwesome5 name="play" size={12} color="#ffffff" />
             <Text style={styles.operadorActionTextPrimary}>Iniciar viaje</Text>
           </TouchableOpacity>
         )}
         {canParada && (
           <TouchableOpacity
-            style={[styles.operadorActionBtn, styles.operadorActionSecondary]}
+            style={[
+              styles.operadorActionBtn,
+              styles.operadorActionSecondary,
+              isMobile && styles.operadorActionBtnMobile,
+            ]}
             onPress={() => finalizarParada(trip)}
             disabled={saving}
             activeOpacity={0.85}
           >
-            <FontAwesome5 name="map-marker-alt" size={11} color="#111111" />
+            <FontAwesome5 name="map-marker-alt" size={12} color="#111111" />
             <Text style={styles.operadorActionText}>Finalizar parada</Text>
           </TouchableOpacity>
         )}
         {canFinalizar && (
           <TouchableOpacity
-            style={[styles.operadorActionBtn, styles.operadorActionDanger]}
+            style={[
+              styles.operadorActionBtn,
+              styles.operadorActionDanger,
+              isMobile && styles.operadorActionBtnMobile,
+            ]}
             onPress={() => finalizarViaje(trip)}
             disabled={saving}
             activeOpacity={0.85}
           >
-            <FontAwesome5 name="flag-checkered" size={11} color="#dc2626" />
+            <FontAwesome5 name="flag-checkered" size={12} color="#dc2626" />
             <Text style={styles.operadorActionTextDanger}>Finalizar viaje</Text>
           </TouchableOpacity>
         )}
@@ -939,25 +1106,31 @@ const deleteTrip = async (id: string) => {
       units.find((u) => u.id === (isOperador ? leg.unidadId : item.unidadId))?.nombre ||
       (isOperador ? leg.unidadId : item.unidadId);
     const conductorIdVal = typeof item.conductorId === "object" ? item.conductorId._id : item.conductorId;
-    const conductorNombre = users.find((u) => u.id === conductorIdVal)?.nombre || "N/A";
+    const conductorNombre = resolveUserName(conductorIdVal) || "N/A";
     const acompananteId = toId(isOperador ? leg.acompanante : item.acompanante);
     const acompananteNombre =
       !acompananteId || acompananteId === "none"
         ? "Sin acompañante"
-        : users.find((u) => u.id === acompananteId)?.nombre ?? "Sin acompañante";
+        : resolveUserName(acompananteId) || "Sin acompañante";
     const canEdit = isAdmin || String(currentUser._id) === String(conductorIdVal);
     const canDelete = isAdmin;
     const estado = getEstadoStyle(item.estado);
 
     return (
-      <View style={[styles.card, isMobile ? styles.cardMobile : styles.cardDesktop]}>
+      <View
+        style={[
+          styles.card,
+          isMobile ? styles.cardMobile : styles.cardDesktop,
+          isOperador && isMobile && styles.cardOperadorMobile,
+        ]}
+      >
         <View style={styles.cardIconWrap}>
           <FontAwesome5 name="route" size={20} color="#111111" />
         </View>
 
         <View style={styles.cardBody}>
           <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle} numberOfLines={1}>
+            <Text style={[styles.cardTitle, isOperador && isMobile && styles.cardTitleOperador]} numberOfLines={2}>
               {isOperador ? leg.destino : item.rutaAcubrir}
             </Text>
             <View style={[styles.estadoBadge, estado.badge]}>
@@ -973,8 +1146,8 @@ const deleteTrip = async (id: string) => {
             </View>
           ) : null}
 
-          <View style={styles.specGrid}>
-            <View style={styles.specItem}>
+          <View style={[styles.specGrid, isOperador && isMobile && styles.specGridOperador]}>
+            <View style={[styles.specItem, isOperador && isMobile && styles.specItemOperador]}>
               <Text style={styles.specLabel}>Unidad</Text>
               <Text style={styles.specValue}>{unidadNombre || "—"}</Text>
             </View>
@@ -984,9 +1157,9 @@ const deleteTrip = async (id: string) => {
                 <Text style={styles.specValue} numberOfLines={1}>{conductorNombre}</Text>
               </View>
             )}
-            <View style={styles.specItem}>
+            <View style={[styles.specItem, isOperador && isMobile && styles.specItemOperador]}>
               <Text style={styles.specLabel}>Destino</Text>
-              <Text style={styles.specValue} numberOfLines={1}>{leg.destino || item.destino || "—"}</Text>
+              <Text style={styles.specValue} numberOfLines={2}>{leg.destino || item.destino || "—"}</Text>
             </View>
             {!isOperador && item.multidestino && normalizeDestinosExtrasList(item.destinoExtra).length > 0 ? (
               <View style={styles.specItem}>
@@ -998,26 +1171,31 @@ const deleteTrip = async (id: string) => {
                 </Text>
               </View>
             ) : null}
-            <View style={styles.specItem}>
+            <View style={[styles.specItem, isOperador && isMobile && styles.specItemOperador]}>
               <Text style={styles.specLabel}>Salida</Text>
               <Text style={styles.specValue}>{formatDateTimeLabel(leg.fechaSalida || item.fechaSalida)}</Text>
             </View>
-            <View style={styles.specItem}>
+            <View style={[styles.specItem, isOperador && isMobile && styles.specItemOperador]}>
               <Text style={styles.specLabel}>Llegada</Text>
               <Text style={styles.specValue}>{formatDateTimeLabel(leg.fechaLlegada || item.fechaLlegada)}</Text>
             </View>
-            <View style={styles.specItem}>
+            <View style={[styles.specItem, isOperador && isMobile && styles.specItemOperador]}>
               <Text style={styles.specLabel}>Acompañante</Text>
               <Text style={styles.specValue} numberOfLines={1}>{acompananteNombre}</Text>
             </View>
           </View>
 
           {isOperador ? (
-            <View style={styles.operadorCardFooter}>
+            <View style={[styles.operadorCardFooter, isMobile && styles.operadorCardFooterMobile]}>
               {renderOperadorActions(item, true)}
               {canEdit && getTripEstadoKey(item.estado) !== "completado" && (
-                <TouchableOpacity style={styles.iconAction} onPress={() => openModal(item)} activeOpacity={0.85}>
-                  <FontAwesome5 name="eye" size={13} color="#111111" />
+                <TouchableOpacity
+                  style={[styles.iconAction, isMobile && styles.iconActionOperador]}
+                  onPress={() => openModal(item)}
+                  activeOpacity={0.85}
+                >
+                  <FontAwesome5 name="eye" size={14} color="#111111" />
+                  {isMobile ? <Text style={styles.iconActionLabel}>Ver detalle</Text> : null}
                 </TouchableOpacity>
               )}
             </View>
@@ -1044,66 +1222,90 @@ const deleteTrip = async (id: string) => {
     mode: "flat" as const,
     underlineColor: "transparent",
     activeUnderlineColor: "transparent",
-    dense: !isMobile,
-    contentStyle: [styles.modalInputContent, isMobile && styles.modalInputContentTouch],
-    style: [styles.modalInput, isMobile && styles.modalInputTouch],
+    dense: !isCompactModal,
+    contentStyle: [styles.modalInputContent, isCompactModal && styles.modalInputContentTouch],
+    style: [styles.modalInput, isCompactModal && styles.modalInputTouch],
     placeholderTextColor: "#9ca3af",
   };
 
   const renderFormSection = (title: string, children: React.ReactNode) => (
-    <View style={styles.formSection}>
-      <Text style={[styles.formSectionTitle, isMobile && styles.formSectionTitleMobile]}>{title}</Text>
+    <View style={[styles.formSection, isCompactModal && styles.formSectionTouch]}>
+      <Text style={[styles.formSectionTitle, isCompactModal && styles.formSectionTitleMobile]}>{title}</Text>
       {children}
     </View>
   );
 
   const renderModalField = (label: string, field: React.ReactNode) => (
-    <View style={[styles.modalFieldGroup, isMobile && styles.modalFieldGroupMobile]}>
-      <Text style={[styles.modalFieldLabel, isMobile && styles.modalFieldLabelMobile]}>{label}</Text>
+    <View style={[styles.modalFieldGroup, isCompactModal && styles.modalFieldGroupMobile]}>
+      <Text style={[styles.modalFieldLabel, isCompactModal && styles.modalFieldLabelMobile]}>{label}</Text>
       {field}
     </View>
   );
 
   const renderFieldRow = (children: React.ReactNode) => (
-    <View style={[styles.modalFieldRow, isMobile && styles.modalFieldRowStack]}>{children}</View>
+    <View style={[styles.modalFieldRow, isCompactModal && styles.modalFieldRowStack]}>{children}</View>
   );
 
   const renderFieldHalf = (children: React.ReactNode) => (
-    <View style={[styles.modalFieldHalf, isMobile && styles.modalFieldFull]}>{children}</View>
+    <View style={[styles.modalFieldHalf, isCompactModal && styles.modalFieldFull]}>{children}</View>
   );
 
   const webControlStyle = (extra?: Record<string, any>) =>
     ({
-      padding: isMobile ? 12 : 10,
-      borderRadius: isMobile ? 12 : 10,
+      padding: isCompactModal ? 12 : 10,
+      borderRadius: isCompactModal ? 12 : 10,
       borderWidth: 1,
       borderStyle: "solid",
       borderColor: "#e5e7eb",
       backgroundColor: "#ffffff",
       width: "100%",
-      fontSize: isMobile ? 16 : 14,
+      maxWidth: "100%",
+      fontSize: isCompactModal ? 16 : 14,
       fontWeight: "600",
       color: "#111111",
-      height: isMobile ? 48 : 42,
+      height: isCompactModal ? 48 : 42,
       boxSizing: "border-box",
       outline: "none",
       ...extra,
     }) as any;
 
+  const openSelectSheet = (
+    title: string,
+    value: string,
+    options: SelectOption[],
+    onChange: (value: string) => void,
+    placeholder = "Seleccionar"
+  ) => {
+    setSelectSheet({ title, value, options, onChange, placeholder });
+  };
+
+  const closeSelectSheet = () => setSelectSheet(null);
+
   const renderSelectField = (
     label: string,
     value: string,
     onChange: (value: string) => void,
-    options: { label: string; value: string }[],
+    options: SelectOption[],
     placeholder = "Seleccionar"
-  ) =>
-    renderModalField(
+  ) => {
+    const selectedLabel =
+      options.find((opt) => opt.value === value)?.label || placeholder;
+    // En escritorio web usamos <select>; en móvil siempre lista tippable
+    const useNativeSelect = Platform.OS === "web" && !isCompactModal;
+
+    return renderModalField(
       label,
-      Platform.OS === "web" ? (
+      useNativeSelect ? (
         <select
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          style={webControlStyle()}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            ...webControlStyle(),
+            appearance: "auto" as any,
+            WebkitAppearance: "menulist" as any,
+            MozAppearance: "menulist" as any,
+          }}
         >
           <option value="">{placeholder}</option>
           {options.map((opt) => (
@@ -1113,16 +1315,86 @@ const deleteTrip = async (id: string) => {
           ))}
         </select>
       ) : (
-        <View style={[styles.pickerWrap, isMobile && styles.pickerWrapTouch]}>
-          <Picker selectedValue={value} onValueChange={onChange} style={[styles.picker, isMobile && styles.pickerTouch]}>
-            <Picker.Item label={placeholder} value="" />
-            {options.map((opt) => (
-              <Picker.Item key={opt.value} label={opt.label} value={opt.value} />
-            ))}
-          </Picker>
-        </View>
+        <Pressable
+          style={({ pressed }) => [
+            styles.selectTrigger,
+            isCompactModal && styles.selectTriggerTouch,
+            pressed && styles.selectTriggerPressed,
+          ]}
+          onPress={() => openSelectSheet(label, value, options, onChange, placeholder)}
+        >
+          <Text
+            style={[
+              styles.selectTriggerText,
+              isCompactModal && styles.selectTriggerTextTouch,
+              !value && styles.selectTriggerPlaceholder,
+            ]}
+            numberOfLines={1}
+          >
+            {selectedLabel}
+          </Text>
+          <FontAwesome5 name="chevron-down" size={12} color="#6b7280" />
+        </Pressable>
       )
     );
+  };
+
+  const renderInModalSelectSheet = () => {
+    if (!selectSheet) return null;
+    const items: SelectOption[] = [
+      { label: selectSheet.placeholder, value: "" },
+      ...selectSheet.options,
+    ];
+
+    return (
+      <View style={styles.selectSheetOverlay} pointerEvents="box-none">
+        <Pressable style={styles.selectSheetBackdrop} onPress={closeSelectSheet} />
+        <View style={[styles.selectSheetCard, isCompactModal && styles.selectSheetCardTouch]}>
+          <View style={styles.selectSheetHeader}>
+            <Text style={styles.selectSheetTitle}>{selectSheet.title}</Text>
+            <Pressable style={styles.selectSheetClose} onPress={closeSelectSheet}>
+              <FontAwesome5 name="times" size={14} color="#6b7280" />
+            </Pressable>
+          </View>
+          <ScrollView
+            style={styles.selectSheetList}
+            contentContainerStyle={styles.selectSheetListContent}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+          >
+            {items.map((item, index) => {
+              const active = item.value === selectSheet.value;
+              return (
+                <Pressable
+                  key={`${item.value || "empty"}-${index}`}
+                  style={({ pressed }) => [
+                    styles.selectSheetItem,
+                    active && styles.selectSheetItemActive,
+                    pressed && styles.selectSheetItemPressed,
+                  ]}
+                  onPress={() => {
+                    selectSheet.onChange(item.value);
+                    closeSelectSheet();
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.selectSheetItemText,
+                      active && styles.selectSheetItemTextActive,
+                      !item.value && styles.selectTriggerPlaceholder,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                  {active ? <FontAwesome5 name="check" size={12} color="#111111" /> : null}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+    );
+  };
 
   const renderDateTimeField = (
     label: string,
@@ -1137,12 +1409,15 @@ const deleteTrip = async (id: string) => {
   ) =>
     renderModalField(
       label,
-      <View style={[styles.dateTimeRow, isMobile && styles.dateTimeRowStack]}>
+      <View
+        style={[styles.dateTimeRow, isCompactModal && styles.dateTimeRowStack]}
+        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+      >
         {Platform.OS === "web" ? (
           <>
             <input
               type="date"
-              value={dateValue && parseDate(dateValue) ? new Date(parseDate(dateValue) as Date).toISOString().split("T")[0] : ""}
+              value={toInputDateValue(dateValue)}
               onChange={(e) => {
                 if (!e.target.value) {
                   onDateChange("");
@@ -1151,40 +1426,52 @@ const deleteTrip = async (id: string) => {
                 const [year, month, day] = e.target.value.split("-");
                 onDateChange(`${day}/${month}/${year}`);
               }}
-              style={webControlStyle(isMobile ? undefined : { flex: 1.2 })}
+              onClick={(e) => e.stopPropagation()}
+              style={webControlStyle(
+                isCompactModal
+                  ? { minHeight: 48, fontSize: 16 }
+                  : { flex: 1.2, minWidth: 0 }
+              )}
             />
             <input
               type="time"
               value={timeValue || ""}
               onChange={(e) => onTimeChange(e.target.value)}
-              style={webControlStyle(isMobile ? undefined : { flex: 0.8 })}
+              onClick={(e) => e.stopPropagation()}
+              style={webControlStyle(
+                isCompactModal
+                  ? { minHeight: 48, fontSize: 16 }
+                  : { flex: 0.8, minWidth: 0 }
+              )}
             />
           </>
         ) : (
           <>
-            <TouchableOpacity
-              style={[styles.dateTimeInput, isMobile && styles.dateTimeInputTouch]}
+            <Pressable
+              style={[styles.dateTimeInput, isCompactModal && styles.dateTimeInputTouch]}
               onPress={() => setShowDatePicker(true)}
-              activeOpacity={0.85}
             >
               <FontAwesome5 name="calendar-alt" size={14} color="#6b7280" />
-              <Text style={styles.dateTimeText}>{dateValue || "Seleccionar fecha"}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.dateTimeInput, isMobile && styles.dateTimeInputTouch]}
+              <Text style={[styles.dateTimeText, !dateValue && styles.selectTriggerPlaceholder]}>
+                {dateValue || "Seleccionar fecha"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.dateTimeInput, isCompactModal && styles.dateTimeInputTouch]}
               onPress={() => setShowTimePicker(true)}
-              activeOpacity={0.85}
             >
               <FontAwesome5 name="clock" size={14} color="#6b7280" />
-              <Text style={styles.dateTimeText}>{timeValue || "Seleccionar hora"}</Text>
-            </TouchableOpacity>
+              <Text style={[styles.dateTimeText, !timeValue && styles.selectTriggerPlaceholder]}>
+                {timeValue || "Seleccionar hora"}
+              </Text>
+            </Pressable>
             {showDatePicker && (
               <DateTimePicker
                 value={parseDate(dateValue) || new Date()}
                 mode="date"
                 display={Platform.OS === "ios" ? "spinner" : "default"}
                 onChange={(_event, date) => {
-                  setShowDatePicker(false);
+                  setShowDatePicker(Platform.OS === "ios");
                   if (date) onDateChange(formatDateDisplay(date));
                 }}
               />
@@ -1195,10 +1482,21 @@ const deleteTrip = async (id: string) => {
                 mode="time"
                 display={Platform.OS === "ios" ? "spinner" : "default"}
                 onChange={(_event, date) => {
-                  setShowTimePicker(false);
+                  setShowTimePicker(Platform.OS === "ios");
                   if (date) onTimeChange(formatTimeDisplay(date));
                 }}
               />
+            )}
+            {Platform.OS === "ios" && (showDatePicker || showTimePicker) && (
+              <Pressable
+                style={styles.iosPickerDone}
+                onPress={() => {
+                  setShowDatePicker(false);
+                  setShowTimePicker(false);
+                }}
+              >
+                <Text style={styles.iosPickerDoneText}>Listo</Text>
+              </Pressable>
             )}
           </>
         )}
@@ -1206,15 +1504,15 @@ const deleteTrip = async (id: string) => {
     );
 
   const renderTravelTimeCard = (tiempo = tiempoTrayecto) => (
-    <View style={[styles.travelTimeCard, isMobile && styles.travelTimeCardTouch, tiempo.live && styles.travelTimeCardLive]}>
+    <View style={[styles.travelTimeCard, isCompactModal && styles.travelTimeCardTouch, tiempo.live && styles.travelTimeCardLive]}>
       <View style={styles.travelTimeHeader}>
         <View style={styles.travelTimeHeaderLeft}>
-          <FontAwesome5 name="stopwatch" size={isMobile ? 16 : 14} color={tiempo.live ? "#059669" : "#111111"} />
+          <FontAwesome5 name="stopwatch" size={isCompactModal ? 16 : 14} color={tiempo.live ? "#059669" : "#111111"} />
           <Text style={styles.travelTimeTitle}>Tiempo de trayecto</Text>
         </View>
         {tiempo.live && <View style={styles.liveDot} />}
       </View>
-      <Text style={[styles.travelTimeValue, isMobile && styles.travelTimeValueTouch, tiempo.live && styles.travelTimeValueLive]}>
+      <Text style={[styles.travelTimeValue, isCompactModal && styles.travelTimeValueTouch, tiempo.live && styles.travelTimeValueLive]}>
         {tiempo.value}
       </Text>
       <Text style={styles.travelTimeHint}>{tiempo.hint}</Text>
@@ -1258,19 +1556,19 @@ const deleteTrip = async (id: string) => {
   function renderModalContent() {
     const modalBody = (
       <View
-        style={[styles.modalCard, isMobile && styles.modalCardTouch]}
+        style={[styles.modalCard, isCompactModal && styles.modalCardTouch]}
         onStartShouldSetResponder={() => true}
         {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
       >
-        {isMobile && <View style={styles.modalDragHandle} />}
+        {isCompactModal && <View style={styles.modalDragHandle} />}
 
-        <View style={[styles.modalHeader, isMobile && styles.modalHeaderTouch]}>
+        <View style={[styles.modalHeader, isCompactModal && styles.modalHeaderTouch]}>
           <View style={styles.modalHeaderLeft}>
-            <View style={[styles.modalIconBadge, isMobile && styles.modalIconBadgeTouch]}>
-              <FontAwesome5 name="route" size={isMobile ? 18 : 16} color="#ffffff" />
+            <View style={[styles.modalIconBadge, isCompactModal && styles.modalIconBadgeTouch]}>
+              <FontAwesome5 name="route" size={isCompactModal ? 18 : 16} color="#ffffff" />
             </View>
             <View style={styles.modalHeaderTextWrap}>
-              <Text style={[styles.modalTitle, isMobile && styles.modalTitleTouch]}>
+              <Text style={[styles.modalTitle, isCompactModal && styles.modalTitleTouch]}>
                 {isAdmin
                   ? editingTrip
                     ? "Editar Viaje"
@@ -1287,23 +1585,23 @@ const deleteTrip = async (id: string) => {
             </View>
           </View>
           <TouchableOpacity
-            style={[styles.modalCloseButton, isMobile && styles.modalCloseButtonTouch]}
+            style={[styles.modalCloseButton, isCompactModal && styles.modalCloseButtonTouch]}
             onPress={closeModal}
             disabled={saving}
             activeOpacity={0.85}
           >
-            <FontAwesome5 name="times" size={isMobile ? 16 : 14} color="#6b7280" />
+            <FontAwesome5 name="times" size={isCompactModal ? 16 : 14} color="#6b7280" />
           </TouchableOpacity>
         </View>
 
         <KeyboardAvoidingView
-          style={styles.modalBodyWrap}
+          style={[styles.modalBodyWrap, isCompactModal && styles.modalBodyWrapTouch]}
           behavior={Platform.OS === "ios" ? "padding" : undefined}
-          keyboardVerticalOffset={isMobile ? 12 : 0}
+          keyboardVerticalOffset={isCompactModal ? 12 : 0}
         >
           <ScrollView
             style={styles.modalScroll}
-            contentContainerStyle={[styles.modalScrollContent, isMobile && styles.modalScrollContentTouch]}
+            contentContainerStyle={[styles.modalScrollContent, isCompactModal && styles.modalScrollContentTouch]}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
@@ -1713,34 +2011,47 @@ const deleteTrip = async (id: string) => {
           </ScrollView>
         </KeyboardAvoidingView>
 
-        <View style={[styles.modalActions, isMobile && styles.modalActionsTouch]}>
-          <TouchableOpacity
-            style={[styles.cancelButton, isMobile && styles.modalActionTouch, !isAdmin && styles.cancelButtonFull]}
+        <View style={[styles.modalActions, isCompactModal && styles.modalActionsTouch]}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.cancelButton,
+              isCompactModal && styles.modalActionTouch,
+              !isAdmin && styles.cancelButtonFull,
+              pressed && styles.actionButtonPressed,
+            ]}
             onPress={closeModal}
             disabled={saving}
-            activeOpacity={0.85}
           >
-            <Text style={styles.cancelButtonText}>{isAdmin ? "Cancelar" : "Cerrar"}</Text>
-          </TouchableOpacity>
+            <Text style={[styles.cancelButtonText, isCompactModal && styles.actionButtonTextTouch]}>
+              {isAdmin ? "Cancelar" : "Cerrar"}
+            </Text>
+          </Pressable>
           {isAdmin && (
-            <TouchableOpacity
-              style={[styles.saveButton, isMobile && styles.modalActionTouch, saving && styles.saveButtonDisabled]}
+            <Pressable
+              style={({ pressed }) => [
+                styles.saveButton,
+                isCompactModal && styles.modalActionTouch,
+                saving && styles.saveButtonDisabled,
+                pressed && styles.actionButtonPressed,
+              ]}
               onPress={saveTrip}
               disabled={saving}
-              activeOpacity={0.85}
             >
               {saving ? (
                 <ActivityIndicator size="small" color="#ffffff" />
               ) : (
-                <Text style={styles.saveButtonText}>Guardar</Text>
+                <Text style={[styles.saveButtonText, isCompactModal && styles.actionButtonTextTouch]}>
+                  Guardar
+                </Text>
               )}
-            </TouchableOpacity>
+            </Pressable>
           )}
         </View>
+        {renderInModalSelectSheet()}
       </View>
     );
 
-    if (isMobile) {
+    if (isCompactModal) {
       return (
         <SafeAreaView style={styles.modalSafeArea} edges={["top", "bottom"]}>
           {modalBody}
@@ -1755,8 +2066,14 @@ const deleteTrip = async (id: string) => {
     <View style={styles.container}>
       <View style={styles.pageHeader}>
         <View style={styles.pageHeaderText}>
-          <Text style={styles.pageTitle}>Viajes Registrados</Text>
-          <Text style={styles.subtitle}>Rutas, conductores y estado de cada viaje</Text>
+          <Text style={[styles.pageTitle, isMobile && styles.pageTitleMobile]}>
+            {isOperador ? "Mis viajes" : "Viajes Registrados"}
+          </Text>
+          <Text style={styles.subtitle}>
+            {isOperador
+              ? "Destino, unidad, horarios y acciones de tu viaje"
+              : "Rutas, conductores y estado de cada viaje"}
+          </Text>
         </View>
       </View>
 
@@ -1771,14 +2088,18 @@ const deleteTrip = async (id: string) => {
 
           <View style={[styles.toolbarFiltersRow, isMobile && styles.toolbarFiltersRowMobile]}>
             <View style={styles.filterBlock}>
-              <Text style={styles.toolbarLabel}>Periodo</Text>
-              <View style={styles.segmentedControl}>
+              <Text style={styles.toolbarLabel}>Periodo exportar</Text>
+              <View style={[styles.segmentedControl, isMobile && styles.segmentedControlMobile]}>
                 {exportOptions.map((opt) => {
                   const isActive = exportType === opt.value;
                   return (
                     <TouchableOpacity
                       key={opt.value}
-                      style={[styles.filterPill, isActive && styles.filterPillActive]}
+                      style={[
+                        styles.filterPill,
+                        isMobile && styles.filterPillMobile,
+                        isActive && styles.filterPillActive,
+                      ]}
                       onPress={() => setExportType(opt.value)}
                       activeOpacity={0.85}
                     >
@@ -1791,8 +2112,12 @@ const deleteTrip = async (id: string) => {
               </View>
             </View>
 
-            <TouchableOpacity style={[styles.exportButton, isMobile && styles.exportButtonMobile]} onPress={exportToExcel} activeOpacity={0.85}>
-              <FontAwesome5 name="file-excel" size={13} color="#111111" />
+            <TouchableOpacity
+              style={[styles.exportButton, isMobile && styles.exportButtonMobile]}
+              onPress={exportToExcel}
+              activeOpacity={0.85}
+            >
+              <FontAwesome5 name="file-excel" size={14} color="#111111" />
               <Text style={styles.exportButtonText}>Exportar Excel</Text>
             </TouchableOpacity>
           </View>
@@ -1801,11 +2126,17 @@ const deleteTrip = async (id: string) => {
 
       <View style={styles.listPanel}>
         {!loading && !loadError && trips.length > 0 && (
-          <View style={styles.listHeader}>
+          <View style={[styles.listHeader, isMobile && styles.listHeaderMobile]}>
             <Text style={styles.listHeaderTitle}>{trips.length} viajes</Text>
-            <Text style={styles.listHeaderHint}>
-              Periodo: {exportOptions.find((o) => o.value === exportType)?.label}
-            </Text>
+            {isAdmin ? (
+              <Text style={[styles.listHeaderHint, isMobile && styles.listHeaderHintMobile]}>
+                Exportar: {exportOptions.find((o) => o.value === exportType)?.label}
+              </Text>
+            ) : (
+              <Text style={[styles.listHeaderHint, isMobile && styles.listHeaderHintMobile]}>
+                Tus viajes asignados
+              </Text>
+            )}
           </View>
         )}
 
@@ -1847,7 +2178,7 @@ const deleteTrip = async (id: string) => {
       {Platform.OS === "web" && modalVisible ? (
         <Portal>
           <View
-            style={[styles.webModalOverlay, isMobile && styles.webModalOverlayTouch]}
+            style={[styles.webModalOverlay, isCompactModal && styles.webModalOverlayTouch]}
             {...(Platform.OS === "web" ? { onClick: closeModal } : {})}
           >
             {renderModalContent()}
@@ -1857,11 +2188,11 @@ const deleteTrip = async (id: string) => {
         <Modal
           visible={modalVisible}
           animationType="slide"
-          transparent={!isMobile}
-          presentationStyle={isMobile ? "fullScreen" : "pageSheet"}
+          transparent={!isCompactModal}
+          presentationStyle={isCompactModal ? "fullScreen" : "pageSheet"}
           onRequestClose={closeModal}
         >
-          <View style={[styles.modalContainer, isMobile && styles.modalContainerTouch]}>
+          <View style={[styles.modalContainer, isCompactModal && styles.modalContainerTouch]}>
             {renderModalContent()}
           </View>
         </Modal>
@@ -1875,15 +2206,19 @@ const styles = StyleSheet.create({
   pageHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16,},
   pageHeaderText: { flex: 1, paddingRight: 12 },
   pageTitle: { fontSize: 24, fontWeight: "800", color: "#111111", letterSpacing: 0.2 },
+  pageTitleMobile: { fontSize: 22 },
   subtitle: { fontSize: 13, color: "#6b7280", marginTop: 4 },
   toolbarPanel: {backgroundColor: "#ffffff",borderRadius: 14,borderWidth: 1,borderColor: "#e5e7eb",padding: 14,marginBottom: 14,gap: 12,...(Platform.OS === "web"  ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any } : {}),},
   toolbarActions: { flexDirection: "row", alignItems: "center" },
   toolbarFiltersRow: {flexDirection: "row",alignItems: "flex-end",justifyContent: "space-between",gap: 12,paddingTop: 12,borderTopWidth: 1,borderTopColor: "#f3f4f6", },
   toolbarFiltersRowMobile: { flexDirection: "column", alignItems: "stretch" },
+  toolbarFiltersRowOperador: { borderTopWidth: 0, paddingTop: 0 },
   filterBlock: { flex: 1, minWidth: 0 },
   toolbarLabel: {fontSize: 11, fontWeight: "700",color: "#9ca3af",textTransform: "uppercase",letterSpacing: 0.5,marginBottom: 8,},
   segmentedControl: {flexDirection: "row",alignSelf: "flex-start",backgroundColor: "#f3f4f6",borderRadius: 999,padding: 4,gap: 4,},
+  segmentedControlMobile: { alignSelf: "stretch", justifyContent: "space-between" },
   filterPill: {paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999, ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
+  filterPillMobile: { flex: 1, alignItems: "center", paddingHorizontal: 10, paddingVertical: 10 },
   filterPillActive: { backgroundColor: "#111111" },
   filterPillText: { fontSize: 12, fontWeight: "700", color: "#6b7280" },
   filterPillTextActive: { color: "#ffffff" },
@@ -1892,19 +2227,21 @@ const styles = StyleSheet.create({
   },
   addButtonMobile: { width: "100%", alignSelf: "stretch" as const, paddingVertical: 14 },
   addButtonText:{color: "#ffffff", fontWeight: "700", fontSize: 14 },
-  exportButton:{flexDirection: "row",alignItems: "center",justifyContent: "center",gap: 8,paddingVertical: 10,paddingHorizontal: 16, borderRadius: 999,borderWidth: 1.5,borderColor: "#111111",backgroundColor: "#ffffff",flexShrink: 0,
+  exportButton:{flexDirection: "row",alignItems: "center",justifyContent: "center",gap: 8,paddingVertical: 12,paddingHorizontal: 16, borderRadius: 999,borderWidth: 1.5,borderColor: "#111111",backgroundColor: "#ffffff",flexShrink: 0,minHeight: 44,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   exportButtonMobile: { width: "100%" },
-  exportButtonText: { color: "#111111", fontWeight: "700", fontSize: 13 },
+  exportButtonText: { color: "#111111", fontWeight: "700", fontSize: 14 },
   listPanel: { backgroundColor: "#ffffff", borderRadius: 14, borderWidth: 1, borderColor: "#e5e7eb", padding: 14, flex: 1,
     ...(Platform.OS === "web"
       ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any }
       : {}),
   },
   listHeader: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",paddingBottom: 12,marginBottom: 12,borderBottomWidth: 1,borderBottomColor: "#f3f4f6", },
+  listHeaderMobile: { flexDirection: "column", alignItems: "flex-start", gap: 4 },
   listHeaderTitle: { fontSize: 14, fontWeight: "700", color: "#111111" },
   listHeaderHint: { fontSize: 12, color: "#9ca3af", fontWeight: "600" },
+  listHeaderHintMobile: { fontSize: 12 },
   listContent: { paddingBottom: 8, gap: 12 },
   listRow: { gap: 12 },
   emptyState: { paddingVertical: 48,paddingHorizontal: 20,alignItems: "center",gap: 8,},
@@ -1914,11 +2251,13 @@ const styles = StyleSheet.create({
   retryButtonText: { color: "#fff", fontWeight: "700" },
   card: { flexDirection: "row",backgroundColor: "#fafafa",borderRadius: 14,borderWidth: 1,borderColor: "#e5e7eb",padding: 14,flex: 1,gap: 12, },
   cardMobile: { width: "100%" },
+  cardOperadorMobile: { padding: 14 },
   cardDesktop: { minWidth: 0, maxWidth: "49%" as any },
   cardIconWrap: {width: 44,height: 44,borderRadius: 12,backgroundColor: "#ffffff",borderWidth: 1,borderColor: "#e5e7eb",alignItems: "center",justifyContent: "center",},
   cardBody: { flex: 1, minWidth: 0 },
   cardHeader: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",gap: 8,marginBottom: 10,},
   cardTitle: { fontSize: 15, fontWeight: "800", color: "#111111", flex: 1 },
+  cardTitleOperador: { fontSize: 17, lineHeight: 22 },
   estadoBadge: {flexDirection: "row",alignItems: "center",gap: 5,paddingHorizontal: 10,paddingVertical: 5,borderRadius: 999, },
   estadoPendiente: { backgroundColor: "#fffbeb", borderWidth: 1, borderColor: "#fde68a" },
   estadoProgreso: { backgroundColor: "#eff6ff", borderWidth: 1, borderColor: "#bfdbfe" },
@@ -1929,9 +2268,15 @@ const styles = StyleSheet.create({
   estadoTextProgreso: { color: "#2563eb" },
   estadoTextParada: { color: "#7c3aed" },
   estadoTextCompletado: { color: "#059669" },
+  specGridOperador: { gap: 10 },
+  specItemOperador: { minWidth: "100%", flexBasis: "100%" },
   operadorCardFooter: {
     marginTop: 4,
     gap: 10,
+  },
+  operadorCardFooterMobile: {
+    marginTop: 8,
+    gap: 12,
   },
   operadorActionsRow: {
     flexDirection: "row",
@@ -1940,6 +2285,11 @@ const styles = StyleSheet.create({
   },
   operadorActionsRowCompact: {
     marginBottom: 4,
+  },
+  operadorActionsRowMobile: {
+    flexDirection: "column",
+    flexWrap: "nowrap",
+    gap: 10,
   },
   operadorActionBtn: {
     flexDirection: "row",
@@ -1950,6 +2300,13 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderWidth: 1.5,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  operadorActionBtnMobile: {
+    width: "100%",
+    justifyContent: "center",
+    minHeight: 48,
+    borderRadius: 14,
+    paddingVertical: 14,
   },
   operadorActionPrimary: {
     backgroundColor: "#111111",
@@ -1966,22 +2323,40 @@ const styles = StyleSheet.create({
   operadorActionText: {
     color: "#111111",
     fontWeight: "700",
-    fontSize: 12,
+    fontSize: 13,
   },
   operadorActionTextPrimary: {
     color: "#ffffff",
     fontWeight: "700",
-    fontSize: 12,
+    fontSize: 13,
   },
   operadorActionTextDanger: {
     color: "#dc2626",
     fontWeight: "700",
-    fontSize: 12,
+    fontSize: 13,
+  },
+  operadorDoneBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
   },
   operadorDoneHint: {
-    fontSize: 12,
-    fontWeight: "600",
+    fontSize: 13,
+    fontWeight: "700",
     color: "#059669",
+  },
+  iconActionOperador: {
+    width: "100%" as any,
+    height: 44,
+    borderRadius: 12,
+    flexDirection: "row",
+    gap: 8,
+  },
+  iconActionLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#111111",
   },
   operadorLegHint: {
     marginTop: 10,
@@ -1989,7 +2364,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#6b7280",
   },
-  cancelButtonFull: { flex: 1 },
   specGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
   specItem: {minWidth: "46%",flexGrow: 1,backgroundColor: "#ffffff",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",paddingHorizontal: 10,paddingVertical: 8,},
   specLabel: {fontSize: 10,fontWeight: "700",color: "#9ca3af",textTransform: "uppercase",letterSpacing: 0.4,},
@@ -1997,16 +2371,35 @@ const styles = StyleSheet.create({
   cardActions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
   iconAction: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e5e7eb", alignItems: "center", justifyContent: "center", ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
   iconActionDanger: { backgroundColor: "#fef2f2", borderColor: "#fecaca" },
-  webModalOverlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0,backgroundColor: "rgba(0,0,0,0.5)",justifyContent: "center",alignItems: "center",zIndex: 9999,padding: 20,
-  ...(Platform.OS === "web" ? { cursor: "default" } : {}),
-} as any,
-  webModalOverlayTouch: { padding: 0, justifyContent: "flex-end", alignItems: "stretch" } as any,
+  webModalOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "stretch",
+    zIndex: 9999,
+    padding: 12,
+    width: "100%",
+    maxWidth: "100vw" as any,
+    boxSizing: "border-box" as any,
+    ...(Platform.OS === "web" ? { cursor: "default", overflow: "auto" } : {}),
+  } as any,
+  webModalOverlayTouch: {
+    padding: 0,
+    justifyContent: "flex-end",
+    alignItems: "stretch",
+    overflow: "hidden",
+  } as any,
   modalContainer: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)", padding: 16 },
   modalContainerTouch: { padding: 0, justifyContent: "flex-end", backgroundColor: "#ffffff" },
-  modalSafeArea: { flex: 1, backgroundColor: "#ffffff" },
+  modalSafeArea: { flex: 1, backgroundColor: "#ffffff", width: "100%" },
   modalCard: {
-    width: Platform.OS === "web" ? 720 : "96%",
-    maxWidth: "100%",
+    width: "100%",
+    maxWidth: 720,
+    alignSelf: "center",
     maxHeight: Platform.OS === "web" ? ("90vh" as any) : "92%",
     backgroundColor: "#ffffff",
     borderRadius: 16,
@@ -2014,17 +2407,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e5e7eb",
     flexDirection: "column",
-    ...(Platform.OS === "web" ? { boxShadow: "0 20px 50px rgba(0,0,0,0.18)" as any, display: "flex" as any } : {}),
+    minWidth: 0,
+    position: "relative",
+    ...(Platform.OS === "web"
+      ? {
+          boxShadow: "0 20px 50px rgba(0,0,0,0.18)" as any,
+          display: "flex" as any,
+          boxSizing: "border-box" as any,
+        }
+      : {}),
   },
   modalCardTouch: {
     width: "100%",
-    maxHeight: Platform.OS === "web" ? ("94vh" as any) : "100%",
-    height: Platform.OS === "web" ? ("94vh" as any) : "100%",
+    maxWidth: "100%",
+    maxHeight: Platform.OS === "web" ? ("100dvh" as any) : "100%",
+    height: Platform.OS === "web" ? ("100dvh" as any) : "100%",
     borderRadius: 0,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: Platform.OS === "web" ? 0 : 20,
+    borderTopRightRadius: Platform.OS === "web" ? 0 : 20,
     borderWidth: 0,
     flex: 1,
+    alignSelf: "stretch",
   },
   modalDragHandle: {
     width: 40,
@@ -2050,12 +2453,18 @@ const styles = StyleSheet.create({
   modalCloseButtonTouch: { width: 40, height: 40, borderRadius: 20 },
   modalBodyWrap:{
     flex: 1,
-    minHeight: Platform.OS === "web" ? 280 : 0,
-    maxHeight: Platform.OS === "web" ? ("calc(90vh - 160px)" as any) : undefined,
+    minHeight: 0,
+    minWidth: 0,
+    ...(Platform.OS === "web" ? { maxHeight: "calc(90vh - 150px)" as any } : {}),
   },
-  modalScroll:{ flex: 1 },
-  modalScrollContent:{paddingHorizontal: 22, paddingTop: 18, paddingBottom: 24 },
-  modalScrollContentTouch: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16 },
+  modalBodyWrapTouch: {
+    flex: 1,
+    minHeight: 0,
+    maxHeight: undefined as any,
+  },
+  modalScroll:{ flex: 1, minHeight: 0, minWidth: 0 },
+  modalScrollContent:{paddingHorizontal: 22, paddingTop: 18, paddingBottom: 24, flexGrow: 1 },
+  modalScrollContentTouch: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 20 },
   formSection: {
     backgroundColor: "#fafafa",
     borderRadius: 14,
@@ -2063,6 +2472,13 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
     padding: 14,
     marginBottom: 14,
+    minWidth: 0,
+    maxWidth: "100%",
+  },
+  formSectionTouch: {
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 12,
   },
   formSectionTitle: {
     fontSize: 12,
@@ -2171,22 +2587,151 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     letterSpacing: 0.3,
   },
-  modalFieldGroup:{marginBottom: 12 },
+  modalFieldGroup:{marginBottom: 12, minWidth: 0, maxWidth: "100%" },
   modalFieldGroupMobile: { marginBottom: 14 },
   modalFieldLabel:{fontSize: 12,fontWeight: "700",color: "#374151",marginBottom: 6,letterSpacing: 0.2, },
   modalFieldLabelMobile: { fontSize: 13, marginBottom: 8 },
-  modalFieldRow: { flexDirection: "row", gap: 12 },
-  modalFieldRowStack: { flexDirection: "column", gap: 0 },
-  modalFieldHalf: { flex: 1, minWidth: 0 },
-  modalFieldFull: { flex: undefined, width: "100%", minWidth: "100%" as any },
-  modalInput: {width: "100%",height: 42,backgroundColor: "#ffffff",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",},
+  modalFieldRow: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  modalFieldRowStack: { flexDirection: "column", flexWrap: "nowrap", gap: 0 },
+  modalFieldHalf: { flexGrow: 1, flexShrink: 1, flexBasis: 220, minWidth: 0, maxWidth: "100%" },
+  modalFieldFull: { flexGrow: 1, flexBasis: "100%", width: "100%", maxWidth: "100%", minWidth: 0 },
+  modalInput: {width: "100%",maxWidth: "100%",height: 42,backgroundColor: "#ffffff",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",},
   modalInputTouch: { height: 48, borderRadius: 12 },
   modalInputContent: { color: "#111111", fontWeight: "600", fontSize: 14 },
   modalInputContentTouch: { fontSize: 16 },
-  pickerWrap: { backgroundColor: "#ffffff", borderRadius: 10, borderWidth: 1, borderColor: "#e5e7eb", overflow: "hidden",},
+  pickerWrap: { backgroundColor: "#ffffff", borderRadius: 10, borderWidth: 1, borderColor: "#e5e7eb", overflow: "hidden", width: "100%", maxWidth: "100%"},
   pickerWrapTouch: { borderRadius: 12, minHeight: 48, justifyContent: "center" },
   picker: { width: "100%", color: "#111111" },
   pickerTouch: { height: 48 },
+  selectTrigger: {
+    width: "100%",
+    minHeight: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  selectTriggerTouch: {
+    minHeight: 52,
+    borderRadius: 12,
+    paddingVertical: 14,
+  },
+  selectTriggerPressed: {
+    backgroundColor: "#f3f4f6",
+  },
+  selectTriggerText: {
+    flex: 1,
+    color: "#111111",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  selectTriggerTextTouch: {
+    fontSize: 16,
+  },
+  selectTriggerPlaceholder: {
+    color: "#9ca3af",
+  },
+  selectSheetOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 50,
+    justifyContent: "flex-end",
+  },
+  selectSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  selectSheetCard: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    maxHeight: "78%",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    zIndex: 51,
+  },
+  selectSheetCardTouch: {
+    maxHeight: "82%",
+  },
+  selectSheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+  },
+  selectSheetTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#111111",
+  },
+  selectSheetClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#f3f4f6",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  selectSheetList: {
+    maxHeight: 420,
+  },
+  selectSheetListContent: {
+    paddingBottom: 24,
+  },
+  selectSheetItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+    backgroundColor: "#ffffff",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  selectSheetItemActive: {
+    backgroundColor: "#f3f4f6",
+  },
+  selectSheetItemPressed: {
+    backgroundColor: "#e5e7eb",
+  },
+  selectSheetItemText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111111",
+  },
+  selectSheetItemTextActive: {
+    fontWeight: "800",
+  },
+  iosPickerDone: {
+    alignSelf: "flex-end",
+    marginTop: 8,
+    backgroundColor: "#111111",
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  iosPickerDoneText: {
+    color: "#ffffff",
+    fontWeight: "700",
+    fontSize: 14,
+  },
   modalSectionTitle: { fontSize: 13, fontWeight: "800", color: "#111111", marginBottom: 10, marginTop: 4, letterSpacing: 0.2,},
   modalSectionTitleMobile: { fontSize: 14, marginBottom: 12, marginTop: 8 },
   kmGrid: { flexDirection: "row", gap: 12, marginBottom: 14 },
@@ -2224,17 +2769,74 @@ const styles = StyleSheet.create({
   travelTimeValueLive: { color: "#059669" },
   travelTimeHint: { fontSize: 12, color: "#6b7280", marginTop: 4 },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#059669" },
-  modalActions: { flexDirection: "row", justifyContent: "space-between", gap: 12, paddingHorizontal: 22, paddingTop: 14,paddingBottom: 22,borderTopWidth: 1,borderTopColor: "#f3f4f6", flexShrink: 0,
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "stretch",
+    gap: 12,
+    paddingHorizontal: 22,
+    paddingTop: 14,
+    paddingBottom: 22,
+    borderTopWidth: 1,
+    borderTopColor: "#f3f4f6",
+    flexShrink: 0,
+    backgroundColor: "#ffffff",
   },
-  modalActionsTouch: { flexDirection: "column-reverse", gap: 10, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16 },
-  modalActionTouch: { width: "100%", paddingVertical: 15, borderRadius: 14 },
-  cancelButton: {flex: 1,backgroundColor: "#ffffff",borderRadius: 999,paddingVertical: 13,alignItems: "center",borderWidth: 1.5,borderColor: "#111111",
+  modalActionsTouch: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 18,
+  },
+  modalActionTouch: {
+    minHeight: 52,
+    borderRadius: 14,
+    paddingVertical: 14,
+  },
+  actionButtonPressed: {
+    opacity: 0.88,
+  },
+  actionButtonTextTouch: {
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#111111",
+    minHeight: 48,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
-  cancelButtonText: { color: "#111111", fontWeight: "700", fontSize: 14 },
-  saveButton: {flex: 1,backgroundColor: "#111111",borderRadius: 999,paddingVertical: 13,alignItems: "center",justifyContent: "center",
+  cancelButtonFull: { flex: 1 },
+  cancelButtonText: {
+    color: "#111111",
+    fontWeight: "800",
+    fontSize: 15,
+    textAlign: "center",
+  },
+  saveButton: {
+    flex: 1,
+    backgroundColor: "#111111",
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 48,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   saveButtonDisabled: { opacity: 0.6 },
-  saveButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
+  saveButtonText: {
+    color: "#ffffff",
+    fontWeight: "800",
+    fontSize: 15,
+    textAlign: "center",
+  },
 });

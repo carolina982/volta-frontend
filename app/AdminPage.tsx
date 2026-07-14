@@ -1,11 +1,13 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useState } from "react";
-import { Alert, Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Alert, Modal, Platform, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { TextInput, Portal } from "react-native-paper";
 import { api } from "../services/api";
 import { User } from "../types";
 
 export default function AdminPage() {
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
   const [users, setUsers] = useState<User[]>([]);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
@@ -86,8 +88,8 @@ export default function AdminPage() {
       return;
     }
 
-    if (rol === "Operador" && isAdding && !contactoTrim) {
-      setFormMessage("El contacto es obligatorio para operadores.");
+    if (isAdding && !contactoTrim) {
+      setFormMessage("El contacto es obligatorio.");
       return;
     }
 
@@ -99,17 +101,23 @@ export default function AdminPage() {
     setSaving(true);
     try {
       if (isAdding) {
-        if (rol === "Admin" && (!email?.trim() || !password?.trim())) {
-          setFormMessage("Admin requiere correo y contraseña.");
+        if (!email?.trim() || !password?.trim()) {
+          setFormMessage("Correo y contraseña son obligatorios para que el usuario pueda iniciar sesión.");
+          setSaving(false);
+          return;
+        }
+        if (password.trim().length < 6) {
+          setFormMessage("La contraseña debe tener al menos 6 caracteres.");
+          setSaving(false);
           return;
         }
         await api.post("/users", {
           nombre: nombreTrim,
           apellido: apellidoTrim,
-          email: rol === "Admin" ? email?.trim() : undefined,
-          password: rol === "Admin" ? password : undefined,
+          email: email.trim().toLowerCase(),
+          password: password.trim(),
           rol,
-          contacto: contactoTrim || undefined,
+          contacto: contactoTrim,
           photoUrl,
         });
         notify("Éxito", "Usuario creado correctamente");
@@ -224,14 +232,19 @@ const deleteUser =async (id:string)=>{
     );
   };
 
-  const showCredentials = isAdding ? editingUser?.rol === "Admin" : true;
-  const showContacto = isAdding ? editingUser?.rol === "Operador" : true;
+  const showCredentials = true;
+  const showContacto = true;
 
   const roleOptions: { value: User["rol"]; label: string; icon: string }[] = isAdding
-    ? [{ value: "Operador", label: "Operador", icon: "truck" }]
+    ? [
+        { value: "Operador", label: "Operador", icon: "truck" },
+        { value: "Ayudante General", label: "Ayudante", icon: "user-friends" },
+        { value: "Admin", label: "Admin", icon: "user-shield" },
+      ]
     : [
         { value: "Admin", label: "Admin", icon: "user-shield" },
         { value: "Operador", label: "Operador", icon: "truck" },
+        { value: "Ayudante General", label: "Ayudante", icon: "user-friends" },
       ];
 
   const inputProps = {
@@ -266,9 +279,11 @@ const deleteUser =async (id:string)=>{
             <FontAwesome5 name={isAdding ? "user-plus" : "user-edit"} size={16} color="#ffffff" />
           </View>
           <View>
-            <Text style={styles.modalTitle}>{isAdding ? "Agregar Operador" : "Editar Usuario"}</Text>
+            <Text style={styles.modalTitle}>{isAdding ? "Agregar Usuario" : "Editar Usuario"}</Text>
             <Text style={styles.modalSubtitle}>
-              {isAdding ? "Completa los datos del nuevo operador" : "Actualiza la información del usuario"}
+              {isAdding
+                ? "Completa los datos. Correo y contraseña permiten el acceso a la app"
+                : "Actualiza la información del usuario"}
             </Text>
           </View>
         </View>
@@ -312,7 +327,6 @@ const deleteUser =async (id:string)=>{
                   style={[styles.rolePill, isActive && styles.rolePillActive]}
                   onPress={() => editingUser && setEditingUser({ ...editingUser, rol: item.value })}
                   activeOpacity={0.85}
-                  disabled={isAdding}
                 >
                   <FontAwesome5 name={item.icon as any} size={12} color={isActive ? "#ffffff" : "#6b7280"} />
                   <Text style={[styles.rolePillText, isActive && styles.rolePillTextActive]}>{item.label}</Text>
@@ -336,7 +350,7 @@ const deleteUser =async (id:string)=>{
           <>
             {renderField("Correo", (
               <TextInput
-                placeholder={editingUser?.rol === "Admin" ? "correo@empresa.com" : "Correo (opcional)"}
+                placeholder="correo@empresa.com"
                 value={editingUser?.email ?? ""}
                 onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, email: text })}
                 keyboardType="email-address"
@@ -346,11 +360,7 @@ const deleteUser =async (id:string)=>{
             ))}
             {renderField("Contraseña", (
               <TextInput
-                placeholder={
-                  isAdding && editingUser?.rol === "Admin"
-                    ? "Contraseña obligatoria"
-                    : "Nueva contraseña (opcional)"
-                }
+                placeholder={isAdding ? "Contraseña (mín. 6 caracteres)" : "Nueva contraseña (opcional)"}
                 value={editingUser?.password ?? ""}
                 onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, password: text })}
                 secureTextEntry
@@ -400,22 +410,34 @@ const deleteUser =async (id:string)=>{
     <View style={styles.container}>
       <View style={styles.pageHeader}>
         <View style={styles.pageHeaderText}>
-          <Text style={styles.title}>Usuarios Registrados</Text>
+          <Text style={[styles.title, isMobile && styles.titleMobile]}>Usuarios Registrados</Text>
           <Text style={styles.subtitle}>Gestiona el equipo y los accesos de Volta</Text>
         </View>
-        {!listLoading && !loadError && (
+        {!listLoading && !loadError && !isMobile && (
           <View style={styles.countBadge}>
             <Text style={styles.countBadgeText}>{users.length}</Text>
           </View>
         )}
       </View>
 
-      <TouchableOpacity style={styles.addButton} onPress={() => handleEdit()} activeOpacity={0.85}>
-        <FontAwesome5 name="user-plus" size={14} color="#ffffff" />
-        <Text style={styles.addButtonText}>Agregar Usuario</Text>
-      </TouchableOpacity>
+      <View style={styles.toolbarPanel}>
+        <TouchableOpacity
+          style={[styles.addButton, isMobile && styles.addButtonMobile]}
+          onPress={() => handleEdit()}
+          activeOpacity={0.85}
+        >
+          <FontAwesome5 name="user-plus" size={14} color="#ffffff" />
+          <Text style={styles.addButtonText}>Agregar Usuario</Text>
+        </TouchableOpacity>
+      </View>
 
       <View style={styles.listPanel}>
+        {!listLoading && !loadError && users.length > 0 && (
+          <View style={[styles.listHeader, isMobile && styles.listHeaderMobile]}>
+            <Text style={styles.listHeaderTitle}>{users.length} usuarios</Text>
+            <Text style={styles.listHeaderHint}>Equipo Volta</Text>
+          </View>
+        )}
         {listLoading ? (
           <View style={styles.emptyState}>
             <FontAwesome5 name="spinner" size={20} color="#9ca3af" />
@@ -471,6 +493,7 @@ const styles = StyleSheet.create({
   },
   pageHeaderText: { flex: 1, paddingRight: 12 },
   title: { fontSize: 24, fontWeight: "800", color: "#111111", letterSpacing: 0.2 },
+  titleMobile: { fontSize: 22 },
   subtitle: { fontSize: 13, color: "#6b7280", marginTop: 4 },
   countBadge: {
     minWidth: 36,
@@ -482,30 +505,52 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   countBadgeText: { color: "#ffffff", fontWeight: "800", fontSize: 14 },
+  toolbarPanel: {
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
+    marginBottom: 14,
+    ...(Platform.OS === "web" ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any } : {}),
+  },
   addButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
     backgroundColor: "#111111",
-    paddingVertical: 13,
-    paddingHorizontal: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
     borderRadius: 999,
-    marginBottom: 18,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const, alignSelf: "flex-start" as const } : {}),
   },
-  addButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 15 },
+  addButtonMobile: { width: "100%", alignSelf: "stretch" as const, paddingVertical: 14 },
+  addButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
   listPanel: {
     backgroundColor: "#ffffff",
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#e5e7eb",
     padding: 14,
+    flex: 1,
     ...(Platform.OS === "web"
       ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any }
       : {}),
   },
-  userList: { gap: 10 },
+  listHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 12,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+  },
+  listHeaderMobile: { flexDirection: "column", alignItems: "flex-start", gap: 4 },
+  listHeaderTitle: { fontSize: 14, fontWeight: "700", color: "#111111" },
+  listHeaderHint: { fontSize: 12, color: "#9ca3af", fontWeight: "600" },
+  userList: { gap: 12 },
   emptyState: {
     paddingVertical: 40,
     paddingHorizontal: 20,

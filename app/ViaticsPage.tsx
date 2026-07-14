@@ -27,13 +27,58 @@ const preciosFijos: Record<string, number> = {
   comidas: 400,
 };
 
-const conceptosList = [
-  "Comidas Cantidad",
-  "Comidas Costo",
-  "Casetas efectivo Cantidad",
-  "Casetas efectivo Costo",
-  "DEF Cantidad",
+const excelHeaders = [
+  "Semana",
+  "Fecha",
+  "Viaje",
+  "Conductor",
+  "Comidas (días)",
+  "Comidas ($)",
+  "DEF (cantidad)",
+  "Casetas efectivo ($)",
+  "TAG ($)",
+  "Casetas + TAG ($)",
+  "Diesel ($)",
+  "Otros gastos ($)",
+  "Detalle otros gastos",
+  "Total ($)",
 ];
+
+const getConceptoValor = (conceptos: any, clave: string): number => {
+  if (!conceptos) return 0;
+  if (typeof conceptos.get === "function") {
+    const nested = conceptos.get(clave.replace(/ (Cantidad|Costo)$/, ""));
+    if (nested && typeof nested === "object") {
+      if (clave.endsWith("Cantidad")) return Number(nested.cantidad || 0);
+      if (clave.endsWith("Costo")) return Number(nested.costo || 0);
+    }
+  }
+  if (conceptos[clave] !== undefined && conceptos[clave] !== null && typeof conceptos[clave] !== "object") {
+    return Number(conceptos[clave] || 0);
+  }
+  const base = clave.replace(/ (Cantidad|Costo)$/, "");
+  const nested = conceptos[base];
+  if (nested && typeof nested === "object") {
+    if (clave.endsWith("Cantidad")) return Number(nested.cantidad || 0);
+    if (clave.endsWith("Costo")) return Number(nested.costo || 0);
+  }
+  return 0;
+};
+
+const getOtrosGastosExport = (v: any) => {
+  const extras = Array.isArray(v.costosExtras)
+    ? v.costosExtras
+    : Array.isArray(v.conceptos?.["Otros gastos"]?.detalle)
+      ? v.conceptos["Otros gastos"].detalle
+      : [];
+  const total =
+    extras.reduce((acc: number, e: any) => acc + Number(e.costo || 0), 0) ||
+    Number(v.conceptos?.["Otros gastos"]?.costo || v.conceptos?.["Otros gastos Costo"] || 0);
+  const detalle = extras
+    .map((e: any) => `${e.description || e.descripcion || "Gasto"}: ${Number(e.costo || 0)}`)
+    .join(" | ");
+  return { total, detalle };
+};
 
 const createEmptyConceptos = () =>
   ({
@@ -376,38 +421,43 @@ const exportViaticosToExcel =async ()=>{
       const rawDate=v.createdAt ||v.fecha || v.updatedAt;
       const date=rawDate ? new Date(rawDate) :new Date();
       if (isNaN(date.getTime())) continue;
-      const monthName =date.toLocaleString("es-Es",{
+      const monthName =date.toLocaleString("es-MX",{
         month:"long",
         year:"numeric",
       });
       const weekNumber=Math.ceil(date.getDate()/7);
       const dayNumber=date.getDate();
       
-      const tripId=typeof v.tripId === "object" ? v.tripId :v.tripId;
       const trip=trips.find(t=>t.id === (typeof v.tripId === "object" ? (v.tripId as any)._id:v.tripId));
-      const viajeNombre= v.viajeNombre || trip?.nombre || (v.tripId as any)?.nombre || "N/A";
-      const conductorNombre=v.conductorNombre || trip?.conductorNombre || (v.tripId as any)?.conductorNombre || "Sin asignar";
-      const dieselTotal= Array.isArray((v as any).dieselHistorial) ?(v as any).dieselHistorial.reduce((acc:number,d:any)=>acc+Number (d.costo || 0),0):Number(v.dieselCosto || 0);
+      const viajeNombre= v.viajeNombre || v.tripNombre || trip?.rutaAcubrir || trip?.destino || trip?.nombre || "N/A";
+      const conductorNombre=v.conductorNombre || trip?.conductorNombre || "Sin asignar";
+      const dieselTotal= Array.isArray((v as any).dieselHistorial)
+        ?(v as any).dieselHistorial.reduce((acc:number,d:any)=>acc+Number (d.costo || 0),0)
+        :Number(v.dieselCosto || (v as any).diselCosto || 0);
+
+      const comidasCantidad = getConceptoValor(v.conceptos, "Comidas Cantidad");
+      const comidasCosto =
+        getConceptoValor(v.conceptos, "Comidas Costo") ||
+        comidasCantidad * preciosFijos.comidas;
+      const defCantidad = getConceptoValor(v.conceptos, "DEF Cantidad");
+      const casetasCosto = getConceptoValor(v.conceptos, "Casetas efectivo Costo");
+      const tagCosto = Number(v.tag || 0);
+      const casetasYTag = casetasCosto + tagCosto;
+      const otros = getOtrosGastosExport(v);
+      const total = Number(v.total ?? 0) || (
+        comidasCosto + casetasYTag + dieselTotal + otros.total
+      );
 
       //cambio  de mes 
       if (monthName !== currentMonth){
         if (monthTotal > 0){
-          ws_data.push([`Total Dia ${currentDay}:${dayTotal}`]);
-          ws_data.push([`Total Semana ${currentWeek}:${weekTotal}`]);
-          ws_data.push([`Total del mes ${currentMonth}:${monthTotal}`]);
+          ws_data.push([`Total Dia ${currentDay}: ${dayTotal}`]);
+          ws_data.push([`Total Semana ${currentWeek}: ${weekTotal}`]);
+          ws_data.push([`Total del mes ${currentMonth}: ${monthTotal}`]);
           ws_data.push([]);
         }
-        ws_data.push([`Mes:${monthName.toUpperCase()}`]);
-        ws_data.push([
-          "Semana",
-          "Fecha",
-          "Viaje",
-          "Conductor",
-          "Diesel",
-          "Tag",
-          ...conceptosList,
-          "Total",
-        ]);
+        ws_data.push([`Mes: ${monthName.toUpperCase()}`]);
+        ws_data.push(excelHeaders);
         currentMonth=monthName;
         currentWeek=0;
         currentDay=0;
@@ -419,7 +469,7 @@ const exportViaticosToExcel =async ()=>{
       // cambio de semana 
       if (weekNumber !== currentWeek){
         if (currentWeek !== 0){
-          ws_data.push([`Total semana ${currentWeek}:${weekTotal}`]);
+          ws_data.push([`Total semana ${currentWeek}: ${weekTotal}`]);
           ws_data.push([]);
         }
         currentWeek=weekNumber;
@@ -429,33 +479,26 @@ const exportViaticosToExcel =async ()=>{
       // cambio de dia 
       if (dayNumber !== currentDay){
         if (currentDay !== 0){
-          ws_data.push([`Total Dia ${currentDay}:${dayTotal}`]);
+          ws_data.push([`Total Dia ${currentDay}: ${dayTotal}`]);
         }
         currentDay=dayNumber;
         dayTotal=0;
       }
 
-      
-
-      const conceptosValores=conceptosList.map(c=>{
-        if (c === "Comidas Costo"){
-          const cantidad=Number(v.conceptos?.["Comidas Cantidad"]?? 0);
-          return cantidad * 400;
-        }
-        return Number(v.conceptos?.[c] ?? 0);
-      });
-      const total =Number(v.total ?? 0);
-
-
-
       ws_data.push([
         weekNumber,
-        date.toLocaleDateString(),
+        date.toLocaleDateString("es-MX"),
         viajeNombre,
         conductorNombre,
+        comidasCantidad,
+        comidasCosto,
+        defCantidad,
+        casetasCosto,
+        tagCosto,
+        casetasYTag,
         dieselTotal,
-        Number(v.tag || 0),
-        ...conceptosValores,
+        otros.total,
+        otros.detalle || "—",
         total,
       ]);
       monthTotal+=total;
@@ -463,15 +506,24 @@ const exportViaticosToExcel =async ()=>{
       dayTotal+=total;
     }
     if (monthTotal>0){
-      ws_data.push([`Total Dia ${currentDay}:${dayTotal}`]);
-      ws_data.push([`Total Semana ${currentWeek}:${weekTotal}`]);
-      ws_data.push([`Total del Mes ${currentMonth}:${monthTotal}`])
+      ws_data.push([`Total Dia ${currentDay}: ${dayTotal}`]);
+      ws_data.push([`Total Semana ${currentWeek}: ${weekTotal}`]);
+      ws_data.push([`Total del Mes ${currentMonth}: ${monthTotal}`]);
+    }
+    if (ws_data.length === 0) {
+      Alert.alert("Aviso", "No hay filas válidas para exportar");
+      return;
     }
     const ws =XLSX.utils.aoa_to_sheet(ws_data);
+    ws["!cols"] = excelHeaders.map((header) => ({
+      wch: Math.max(12, Math.min(28, header.length + 2)),
+    }));
     const wb =XLSX.utils.book_new();
 
     XLSX.utils.book_append_sheet(wb,ws,"Viaticos");
-     
+    const stamp = new Date().toISOString().slice(0, 10);
+    const filename = `Viaticos_${stamp}.xlsx`;
+
     if (Platform.OS === "web"){
       const excelBuffer= XLSX.write(wb,{
         bookType:"xlsx",
@@ -480,18 +532,34 @@ const exportViaticosToExcel =async ()=>{
       const blob=new Blob([excelBuffer],{
         type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
+      const nav = typeof navigator !== "undefined" ? (navigator as any) : null;
+      if (nav?.share && typeof File !== "undefined") {
+        try {
+          const file = new File([blob], filename, { type: blob.type });
+          if (!nav.canShare || nav.canShare({ files: [file] })) {
+            await nav.share({ files: [file], title: filename });
+            Alert.alert("Exito","Reporte generado correctamente");
+            return;
+          }
+        } catch {
+          // canceló o falló → descarga
+        }
+      }
       const url=window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href=url;
-      a.download="Viaticos.xlsx";
+      a.download=filename;
+      a.rel = "noopener";
+      document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 800);
     }else{
       const base64=XLSX.write(wb,{
         bookType:"xlsx",
         type:"base64",
       });
-      const fileUri=(FileSystem as any).documentDirectory +"Viaticos.xlsx";
+      const fileUri=(FileSystem as any).documentDirectory + filename;
       await FileSystem.writeAsStringAsync(fileUri,base64,{
         encoding:"base64",
       });
@@ -500,7 +568,11 @@ const exportViaticosToExcel =async ()=>{
         Alert.alert("Error","No se puede compartir el archivo ");
         return;
       }
-      await Sharing.shareAsync(fileUri);
+      await Sharing.shareAsync(fileUri, {
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        dialogTitle: "Compartir viáticos Excel",
+        UTI: "com.microsoft.excel.xlsx",
+      });
     }
     Alert.alert("Exito","Reporte generado correctamente");
   }catch (error){
@@ -1137,43 +1209,54 @@ const openModal = useCallback((viatico?: Viatico) => {
 
       <View style={styles.toolbarPanel}>
         <View style={styles.toolbarActions}>
-          <TouchableOpacity style={styles.addButton} onPress={() => openModal()} activeOpacity={0.85}>
+          <TouchableOpacity style={[styles.addButton, isMobile && styles.addButtonMobile]} onPress={() => openModal()} activeOpacity={0.85}>
             <FontAwesome5 name="plus" size={14} color="#ffffff" />
             <Text style={styles.addButtonText}>Nuevo Viático</Text>
           </TouchableOpacity>
         </View>
 
-        {currentUser?.rol !== "Operador" && (
-          <View style={[styles.toolbarFiltersRow, isMobile && styles.toolbarFiltersRowMobile]}>
-            <View style={styles.filterBlock}>
-              <Text style={styles.toolbarLabel}>Periodo</Text>
-              <View style={styles.segmentedControl}>
-                {filterOptions.map((opt) => {
-                  const isActive = filter === opt.value;
-                  return (
-                    <TouchableOpacity key={opt.value}style={[styles.filterPill, isActive && styles.filterPillActive]}onPress={() => setFilter(opt.value)}activeOpacity={0.85}>
-                      <Text style={[styles.filterPillText, isActive && styles.filterPillTextActive]}>
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+        <View style={[styles.toolbarFiltersRow, isMobile && styles.toolbarFiltersRowMobile]}>
+          <View style={styles.filterBlock}>
+            <Text style={styles.toolbarLabel}>Periodo</Text>
+            <View style={[styles.segmentedControl, isMobile && styles.segmentedControlMobile]}>
+              {filterOptions.map((opt) => {
+                const isActive = filter === opt.value;
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[styles.filterPill, isMobile && styles.filterPillMobile, isActive && styles.filterPillActive]}
+                    onPress={() => setFilter(opt.value)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.filterPillText, isActive && styles.filterPillTextActive]}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
+          </View>
 
-            <TouchableOpacity style={styles.exportButton} onPress={exportViaticosToExcel} activeOpacity={0.85}>
+          {isAdmin && (
+            <TouchableOpacity
+              style={[styles.exportButton, isMobile && styles.exportButtonMobile]}
+              onPress={exportViaticosToExcel}
+              activeOpacity={0.85}
+            >
               <FontAwesome5 name="file-excel" size={13} color="#111111" />
               <Text style={styles.exportButtonText}>Exportar Excel</Text>
             </TouchableOpacity>
-          </View>
-        )}
+          )}
+        </View>
       </View>
 
       <View style={styles.listPanel}>
         {!listLoading && !loadError && viaticos.length > 0 && (
-          <View style={styles.listHeader}>
+          <View style={[styles.listHeader, isMobile && styles.listHeaderMobile]}>
             <Text style={styles.listHeaderTitle}>{viaticos.length} viáticos</Text>
-            <Text style={styles.listHeaderHint}>Periodo: {filterOptions.find((o) => o.value === filter)?.label}</Text>
+            <Text style={styles.listHeaderHint}>
+              Periodo: {filterOptions.find((o) => o.value === filter)?.label}
+            </Text>
           </View>
         )}
         {listLoading ? (
@@ -1228,6 +1311,7 @@ const styles = StyleSheet.create({
   pageTitle: { fontSize: 24, fontWeight: "800", color: "#111111", letterSpacing: 0.2 },
   subtitle: { fontSize: 13, color: "#6b7280", marginTop: 4 },
   addButton: {flexDirection: "row",alignItems: "center",justifyContent: "center",gap: 8,backgroundColor: "#111111",paddingVertical: 12,paddingHorizontal: 18,borderRadius: 999, ...(Platform.OS === "web" ? { cursor: "pointer" as const, alignSelf: "flex-start" as const } : {}),},
+  addButtonMobile: { width: "100%", alignSelf: "stretch" as const, paddingVertical: 14 },
   addButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
   toolbarPanel: {backgroundColor: "#ffffff",borderRadius: 14,borderWidth: 1,borderColor: "#e5e7eb",padding: 14,marginBottom: 14,gap: 12,...(Platform.OS === "web"  ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any }  : {}), },
   toolbarActions: {flexDirection: "row",alignItems: "center",},
@@ -1236,13 +1320,17 @@ const styles = StyleSheet.create({
   filterBlock:{flex: 1, minWidth: 0 },
   toolbarLabel:{fontSize: 11,fontWeight: "700",color: "#9ca3af",textTransform: "uppercase",letterSpacing: 0.5,marginBottom: 8,},
   segmentedControl:{flexDirection: "row", alignSelf: "flex-start", backgroundColor: "#f3f4f6", borderRadius: 999,padding: 4,gap: 4,},
+  segmentedControlMobile: { alignSelf: "stretch", justifyContent: "space-between" },
+  filterPillMobile: { flex: 1, alignItems: "center", paddingHorizontal: 10, paddingVertical: 10 },
   filterPill: {paddingVertical: 8,paddingHorizontal: 16,borderRadius: 999,...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),},
   filterPillActive: { backgroundColor: "#111111" },
   filterPillText: { fontSize: 12, fontWeight: "700", color: "#6b7280" },
   filterPillTextActive: { color: "#ffffff" },
-  exportButton: { flexDirection: "row",alignItems: "center",gap: 8,paddingVertical: 10,paddingHorizontal: 16,borderRadius: 999,borderWidth: 1.5,borderColor: "#111111",backgroundColor: "#ffffff",flexShrink: 0, ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}), },
-  exportButtonText: { color: "#111111", fontWeight: "700", fontSize: 13 },
+  exportButton: { flexDirection: "row",alignItems: "center",justifyContent: "center",gap: 8,paddingVertical: 12,paddingHorizontal: 16,borderRadius: 999,borderWidth: 1.5,borderColor: "#111111",backgroundColor: "#ffffff",flexShrink: 0,minHeight: 44, ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}), },
+  exportButtonMobile: { width: "100%" },
+  exportButtonText: { color: "#111111", fontWeight: "700", fontSize: 14 },
   listHeader: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",paddingBottom: 12,marginBottom: 12,borderBottomWidth: 1,borderBottomColor: "#f3f4f6",},
+  listHeaderMobile: { flexDirection: "column", alignItems: "flex-start", gap: 4 },
   listHeaderTitle: { fontSize: 14, fontWeight: "700", color: "#111111" },
   listHeaderHint: { fontSize: 12, color: "#9ca3af", fontWeight: "600" },
   listPanel: {backgroundColor: "#ffffff",borderRadius: 14,borderWidth: 1,borderColor: "#e5e7eb",padding: 14,flex: 1,...(Platform.OS === "web" ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any } : {}),},

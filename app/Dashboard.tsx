@@ -1,8 +1,20 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
-import { Image, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Animated,
+  Easing,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { Appbar, Avatar, Badge, Divider } from "react-native-paper"; // <-- Importamos Badge
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useStore } from "../context/Store";
@@ -21,15 +33,78 @@ export default function Dashboard() {
   const { currentUser, setCurrentUser } = useStore();
   const [tab, setTab] = useState<TabType>("Inicio");
   const [menuVisible, setMenuVisible] = useState(false);
+  const [menuRendered, setMenuRendered] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
   const { width } = useWindowDimensions();
   const router = useRouter();
+  const drawerWidth = Math.min(Math.max(width * 0.82, 300), 360);
+  const drawerSlide = useRef(new Animated.Value(0)).current;
+  const overlayFade = useRef(new Animated.Value(0)).current;
+  const itemAnims = useRef(
+    Array.from({ length: 8 }, () => new Animated.Value(0))
+  ).current;
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
   const isLargeScreen = isMounted && width >= 1024;
+
+  const openMobileMenu = useCallback(() => {
+    setMenuRendered(true);
+    setMenuVisible(true);
+    drawerSlide.setValue(0);
+    overlayFade.setValue(0);
+    itemAnims.forEach((anim) => anim.setValue(0));
+
+    Animated.parallel([
+      Animated.timing(overlayFade, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.spring(drawerSlide, {
+        toValue: 1,
+        friction: 9,
+        tension: 70,
+        useNativeDriver: true,
+      }),
+      Animated.stagger(
+        45,
+        itemAnims.map((anim) =>
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 280,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          })
+        )
+      ),
+    ]).start();
+  }, [drawerSlide, overlayFade, itemAnims]);
+
+  const closeMobileMenu = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(overlayFade, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(drawerSlide, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) {
+        setMenuVisible(false);
+        setMenuRendered(false);
+      }
+    });
+  }, [drawerSlide, overlayFade]);
 
   const handleTabPress = useCallback((item: TabType) => {
     setTab(item);
@@ -260,9 +335,15 @@ export default function Dashboard() {
       ) : (
         <>
           {/* ================= HEADER MOVIL ================= */}
-          <Appbar.Header style={{ backgroundColor: "#ffffff", borderBottomWidth: 1, borderBottomColor: "#e5e7eb", elevation: 0 }}>
-            <Appbar.Action icon="menu" onPress={() => setMenuVisible(true)} />
-            <Appbar.Content title={tab} titleStyle={{ fontWeight: "bold", fontSize: 18 }} />
+          <Appbar.Header style={styles.mobileAppbar}>
+            <Appbar.Action icon="menu" color="#111111" onPress={() => setMenuVisible(true)} />
+            <View style={styles.mobileLogoWrap}>
+              <Image
+                source={require("../assets/images/logo-volta.jpeg")}
+                style={styles.mobileHeaderLogo}
+                resizeMode="contain"
+              />
+            </View>
             <TouchableOpacity
               style={styles.mobileHeaderUser}
               onPress={() => { handleTabPress("Perfil"); setMenuVisible(false); }}
@@ -284,21 +365,7 @@ export default function Dashboard() {
           {menuVisible && (
             <View style={styles.drawerOverlay}>
               <SafeAreaView style={styles.drawer}>
-                
-                <View style={styles.drawerAvatarContainer}>
-                  {currentUser.photoUrl ? (
-                    <Avatar.Image size={50} source={{ uri: currentUser.photoUrl }} />
-                  ) : (
-                    <Avatar.Text size={50} label={`${currentUser.nombre?.[0] || 'U'}${currentUser.apellido?.[0] || ''}`} />
-                  )}
-                  <View style={styles.userInfo}>
-                    <Text numberOfLines={1} style={styles.drawerName}>{currentUser.nombre} {currentUser.apellido}</Text>
-                    <Text numberOfLines={1} style={styles.drawerRole}>{currentUser.rol}</Text>
-                  </View>
-                </View>
-                <Divider style={{ marginVertical: 15 }} />
-
-                <ScrollView style={{ flex: 1 }}>
+                <ScrollView style={styles.drawerMenuList} contentContainerStyle={styles.drawerMenuContent}>
                   {menuItems.map((item) => {
                     const isActive = tab === item;
                     return (
@@ -311,15 +378,14 @@ export default function Dashboard() {
                           <FontAwesome5 
                             name={getTabIcon(item)} 
                             size={16} 
-                            color={isActive ? "#fff" : "#64748b"} 
+                            color={isActive ? "#111111" : "#6b7280"} 
                             style={styles.menuIcon} 
                           />
-                          <Text style={[styles.drawerText, isActive && { color: "#fff", fontWeight: "700" }]}>
+                          <Text style={[styles.drawerText, isActive && styles.drawerTextActive]}>
                             {item}
                           </Text>
                         </View>
 
-                        {/* Badges también en menú móvil */}
                         {item === "Viajes" && viajesActivos > 0 && (
                           <Badge style={styles.badgeViajesMobile}>{viajesActivos}</Badge>
                         )}
@@ -331,9 +397,13 @@ export default function Dashboard() {
                   })}
                 </ScrollView>
 
-                <TouchableOpacity style={styles.logoutButton} onPress={() => { setMenuVisible(false); handleLogout(); }}>
-                  <FontAwesome5 name="sign-out-alt" size={16} color="#fff" style={styles.menuIcon} />
-                  <Text style={styles.logoutText}>Cerrar Sesión</Text>
+                <TouchableOpacity
+                  style={styles.drawerLogoutButton}
+                  onPress={() => { setMenuVisible(false); handleLogout(); }}
+                  activeOpacity={0.85}
+                >
+                  <FontAwesome5 name="sign-out-alt" size={15} color="#dc2626" style={styles.menuIcon} />
+                  <Text style={styles.drawerLogoutText}>Cerrar Sesión</Text>
                 </TouchableOpacity>
               </SafeAreaView>
               <TouchableOpacity style={styles.overlayBackground} onPress={() => setMenuVisible(false)} />
@@ -428,21 +498,75 @@ const styles = StyleSheet.create({
 
   /* ===== MÓVIL ===== */
   mobileContent: { flex: 1, padding: 20, backgroundColor: "#f4f6f9" },
+  mobileAppbar: {
+    backgroundColor: "#ffffff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+    elevation: 0,
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  mobileLogoWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  mobileHeaderLogo: {
+    width: 140,
+    height: 36,
+  },
   mobileHeaderUser: {
-    marginRight: 10,
+    marginRight: 8,
+    width: 40,
+    alignItems: "center",
+    justifyContent: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   drawerOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, flexDirection: "row", zIndex: 1000 },
-  drawer: { width: 280, backgroundColor: "#fff", paddingHorizontal: 20, paddingTop: 20, paddingBottom: 20, elevation: 16, justifyContent: "space-between" },
-  drawerAvatarContainer: { flexDirection: "row", alignItems: "center", marginTop: 10 },
-  overlayBackground: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)" },
-  
-  drawerItem: {flexDirection: "row", alignItems: "center", justifyContent: "space-between",paddingVertical: 12, paddingHorizontal: 12, borderRadius: 8, marginVertical: 4 },
-  drawerItemActive: { backgroundColor: "#007bff" },
-  drawerText: { fontSize: 15, color: "#334155", marginLeft: 5 },
-  drawerName: { fontSize: 16, fontWeight: "bold", color: "#1e293b" },
-  drawerRole: { fontSize: 13, color: "#007bff", marginTop: 1 },
-  
+  drawer: {
+    width: 280,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 20,
+    elevation: 16,
+    justifyContent: "space-between",
+    borderRightWidth: 1,
+    borderRightColor: "#e5e7eb",
+  },
+  drawerMenuList: { flex: 1 },
+  drawerMenuContent: { paddingTop: 10, paddingBottom: 12, gap: 2 },
+  overlayBackground: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
+
+  drawerItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    marginVertical: 2,
+  },
+  drawerItemActive: {
+    backgroundColor: "rgba(0, 0, 0, 0.08)",
+  },
+  drawerText: { fontSize: 15, color: "#374151", marginLeft: 8, fontWeight: "600" },
+  drawerTextActive: { color: "#111111", fontWeight: "800" },
+  drawerLogoutButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    backgroundColor: "#fef2f2",
+    marginTop: 8,
+  },
+  drawerLogoutText: { color: "#dc2626", fontWeight: "700", fontSize: 14, marginLeft: 6 },
+
   // Estilos de los Badges (Móvil)
   badgeViajesMobile: { backgroundColor: "#10b981", color: "#fff" },
   badgeViaticosMobile: { backgroundColor: "#f59e0b", color: "#fff" }

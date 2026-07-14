@@ -1,4 +1,5 @@
 import { FontAwesome5 } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
@@ -18,19 +19,22 @@ import { TextInput } from "react-native-paper";
 import { useStore } from "../context/Store";
 import { api } from "../services/api";
 
+type RegisterRole = "Admin" | "Operador";
+
 export default function Register() {
   const router = useRouter();
-  const { addUser } = useStore();
+  const { login, addUser } = useStore();
   const { width } = useWindowDimensions();
   const [isMounted, setIsMounted] = useState(false);
   const isLargeScreen = isMounted && width >= 768;
+  const [saving, setSaving] = useState(false);
 
   const [email, setEmail] = useState("");
   const [nombre, setNombre] = useState("");
   const [apellido, setApellido] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [rol, setRol] = useState<"Admin" | "Chofer">("Chofer");
+  const [rol, setRol] = useState<RegisterRole>("Operador");
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [contacto, setContacto] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -40,8 +44,8 @@ export default function Register() {
     setIsMounted(true);
   }, []);
 
-  const roles: { value: "Admin" | "Chofer"; label: string; icon: string; hint: string }[] = [
-    { value: "Chofer", label: "Chofer", icon: "truck", hint: "Operador de ruta" },
+  const roles: { value: RegisterRole; label: string; icon: string; hint: string }[] = [
+    { value: "Operador", label: "Operador", icon: "truck", hint: "Operador de ruta" },
     { value: "Admin", label: "Admin", icon: "user-shield", hint: "Gestión completa" },
   ];
 
@@ -65,8 +69,15 @@ export default function Register() {
   };
 
   const handleRegister = async () => {
+    if (saving) return;
+
     if (!email || !nombre || !apellido || !contacto || !password || !confirmPassword || !rol) {
       Alert.alert("Error", "Todos los campos son obligatorios");
+      return;
+    }
+
+    if (password.length < 6) {
+      Alert.alert("Error", "La contraseña debe tener al menos 6 caracteres");
       return;
     }
 
@@ -75,17 +86,18 @@ export default function Register() {
       return;
     }
 
+    setSaving(true);
     try {
       let res;
 
       if (photoUrl) {
         const formData = new FormData();
-        formData.append("nombre", nombre);
-        formData.append("apellido", apellido);
-        formData.append("email", email.toLowerCase());
+        formData.append("nombre", nombre.trim());
+        formData.append("apellido", apellido.trim());
+        formData.append("email", email.trim().toLowerCase());
         formData.append("password", password);
         formData.append("rol", rol);
-        formData.append("contacto", contacto);
+        formData.append("contacto", contacto.trim());
 
         if (Platform.OS === "web") {
           const response = await fetch(photoUrl);
@@ -99,27 +111,65 @@ export default function Register() {
           formData.append("photo", {
             uri: photoUrl,
             name: `imagen.${fileType}`,
-            type: `image/${fileType}`,
+            type: `image/${fileType === "jpg" ? "jpeg" : fileType}`,
           } as any);
           res = await api.post("/users/register", formData, {
             headers: { "Content-Type": "multipart/form-data" },
           });
         }
       } else {
-        const newUser = { nombre, apellido, email: email.toLowerCase(), password, rol, contacto };
+        const newUser = {
+          nombre: nombre.trim(),
+          apellido: apellido.trim(),
+          email: email.trim().toLowerCase(),
+          password,
+          rol,
+          contacto: contacto.trim(),
+        };
         res = await api.post("/users/register", newUser);
       }
 
       if (res.status === 200 || res.status === 201) {
+        const data = res.data;
+        const userId = data._id || data.id;
+        const user = {
+          _id: userId,
+          id: userId,
+          nombre: data.nombre,
+          apellido: data.apellido,
+          email: data.email,
+          rol: data.rol,
+          photoUrl: data.photoUrl || null,
+          contacto: data.contacto || "",
+        };
+
+        if (data.token) {
+          if (Platform.OS === "web") {
+            localStorage.setItem("token", data.token);
+          } else if (AsyncStorage && typeof AsyncStorage.setItem === "function") {
+            await AsyncStorage.setItem("token", data.token);
+          }
+          login(user, data.token);
+        }
+
+        addUser(user);
         Alert.alert("Éxito", "Usuario registrado correctamente");
-        addUser(res.data);
         router.replace("/Dashboard");
       } else {
         Alert.alert("Error", "No se pudo registrar el usuario");
       }
     } catch (error: any) {
       console.error("Error registrando usuario:", error.response || error);
-      Alert.alert("Error", error.response?.data?.message || "Algo salió mal");
+      const data = error.response?.data;
+      const message =
+        data?.message ||
+        data?.errors?.[0]?.msg ||
+        (error.code === "ECONNABORTED"
+          ? "El servidor tardó demasiado en responder"
+          : "No se pudo registrar. Verifica la conexión.");
+      Alert.alert("Error", message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -235,8 +285,13 @@ export default function Register() {
 
             {photoUrl && <Image source={{ uri: photoUrl }} style={styles.avatarPreview} />}
 
-            <TouchableOpacity style={styles.button} onPress={handleRegister} activeOpacity={0.85}>
-              <Text style={styles.buttonText}>Registrarse</Text>
+            <TouchableOpacity
+              style={[styles.button, saving && styles.buttonDisabled]}
+              onPress={handleRegister}
+              activeOpacity={0.85}
+              disabled={saving}
+            >
+              <Text style={styles.buttonText}>{saving ? "Registrando..." : "Registrarse"}</Text>
             </TouchableOpacity>
 
             <View style={styles.loginBox}>
@@ -406,6 +461,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
+  buttonDisabled: { opacity: 0.7 },
   buttonText: { color: "#ffffff", fontSize: 16, fontWeight: "700" },
   loginBox: {
     width: "100%",

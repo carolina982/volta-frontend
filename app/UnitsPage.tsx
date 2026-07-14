@@ -365,10 +365,16 @@ export default function UnitsPage() {
         )}
       </View>
 
-      <TouchableOpacity style={styles.addButton} onPress={() => openModal()} activeOpacity={0.85}>
-        <FontAwesome5 name="plus" size={14} color="#ffffff" />
-        <Text style={styles.addButtonText}>Nueva Unidad</Text>
-      </TouchableOpacity>
+      <View style={styles.toolbarPanel}>
+        <TouchableOpacity
+          style={[styles.addButton, isMobile && styles.addButtonMobile]}
+          onPress={() => openModal()}
+          activeOpacity={0.85}
+        >
+          <FontAwesome5 name="plus" size={14} color="#ffffff" />
+          <Text style={styles.addButtonText}>Nueva Unidad</Text>
+        </TouchableOpacity>
+      </View>
 
       <View style={styles.listPanel}>
         {listLoading ? (
@@ -466,10 +472,28 @@ const styles = StyleSheet.create({
   subtitle:{fontSize: 13, color: "#6b7280", marginTop: 4 },
   countBadge:{minWidth: 36,height: 36,borderRadius: 18,backgroundColor: "#111111",alignItems: "center",justifyContent: "center",paddingHorizontal: 10,},
   countBadgeText:{color: "#ffffff", fontWeight: "800", fontSize: 14 },
-  addButton:{flexDirection: "row",alignItems: "center",justifyContent: "center",gap: 8,backgroundColor: "#111111",paddingVertical: 13,paddingHorizontal: 20,borderRadius: 999,marginBottom: 18,
+  toolbarPanel: {
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
+    marginBottom: 14,
+    ...(Platform.OS === "web" ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any } : {}),
+  },
+  addButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#111111",
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 999,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const, alignSelf: "flex-start" as const } : {}),
   },
-  addButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 15 },
+  addButtonMobile: { width: "100%", alignSelf: "stretch" as const, paddingVertical: 14 },
+  addButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
   listPanel: { backgroundColor: "#ffffff", borderRadius: 14, borderWidth: 1, borderColor: "#e5e7eb", padding: 14, flex: 1, ...(Platform.OS === "web"
       ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any }
       : {}),
