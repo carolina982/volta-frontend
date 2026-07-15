@@ -505,10 +505,39 @@ export default function TripsPage() {
   const [selectSheet, setSelectSheet] = useState<SelectSheetState | null>(null);
 
   const isAdmin = currentUser?.rol?.toLowerCase() === "admin";
+  const roleKey = (currentUser?.rol || "").toLowerCase();
+  const isAyudante = roleKey === "ayudante general" || roleKey === "ayudante";
   const isOperador = !isAdmin;
+  const myUserId = String(currentUser?._id || (currentUser as any)?.id || "");
+
+  const isTripAssignedToMe = useCallback((t: any) => {
+    if (!myUserId) return false;
+    if (toId(t.conductorId) === myUserId || toId(t.acompanante) === myUserId) return true;
+    const extras = Array.isArray(t.destinoExtra) ? t.destinoExtra : [];
+    return extras.some(
+      (extra: any) =>
+        toId(extra?.conductorId) === myUserId || toId(extra?.acompanante) === myUserId
+    );
+  }, [myUserId]);
+
+  const isCompanionOnTrip = useCallback((t: any) => {
+    if (!myUserId) return false;
+    if (toId(t.acompanante) === myUserId) return true;
+    const extras = Array.isArray(t.destinoExtra) ? t.destinoExtra : [];
+    return extras.some((extra: any) => toId(extra?.acompanante) === myUserId);
+  }, [myUserId]);
 
   const operadores = useMemo(
     () => users.filter((u) => (u.rol || "").toLowerCase() === "operador"),
+    [users]
+  );
+
+  const acompanantesOptions = useMemo(
+    () =>
+      users.filter((u) => {
+        const r = (u.rol || "").toLowerCase();
+        return r === "operador" || r === "ayudante general" || r === "ayudante" || r === "chofer";
+      }),
     [users]
   );
 
@@ -605,10 +634,7 @@ export default function TripsPage() {
 
       let allTrips = res.data.map((t: any) => ({ ...t, id: t._id }));
       if (!isAdmin) {
-        allTrips = allTrips.filter((t: any) => {
-          const conductor = typeof t.conductorId === "object" ? t.conductorId._id : t.conductorId;
-          return String(conductor) === String(currentUser._id);
-        });
+        allTrips = allTrips.filter((t: any) => isTripAssignedToMe(t));
       }
       setTrips(allTrips);
     } catch (error: any) {
@@ -617,7 +643,7 @@ export default function TripsPage() {
     } finally {
       setLoading(false);
     }
-  }, [currentUser, isAdmin]);
+  }, [currentUser, isAdmin, isTripAssignedToMe]);
 
   const loadUnits = useCallback(async () => {
     try {
@@ -1581,7 +1607,9 @@ const deleteTrip = async (id: string) => {
         ? "Sin acompañante"
         : resolveUserName(acompananteId) || "Sin acompañante";
     const asignadoPorNombre = resolveAsignadoPorNombre(item);
-    const canEdit = isAdmin || String(currentUser._id) === String(conductorIdVal);
+    const asCompanion = !isAdmin && isCompanionOnTrip(item) && toId(conductorIdVal) !== myUserId;
+    const canEdit = isAdmin || toId(conductorIdVal) === myUserId;
+    const canView = isAdmin || isTripAssignedToMe(item);
     const canDelete = isAdmin;
     const estado = getEstadoStyle(item.estado);
     const destinoLabel = leg.destino || item.destino || "—";
@@ -1591,7 +1619,15 @@ const deleteTrip = async (id: string) => {
     if (isMobile || isNarrowList) {
       return (
         <View style={styles.cardSlot}>
-          <View style={[styles.card, styles.cardFullWidth, styles.cardMobileCompact]}>
+          <View
+            style={[
+              styles.card,
+              styles.cardFullWidth,
+              styles.cardMobileCompact,
+              isOperador && styles.cardFieldStaff,
+              asCompanion && styles.cardCompanion,
+            ]}
+          >
             <View style={styles.cardBody}>
               <View style={styles.cardHeader}>
                 <Text style={[styles.cardTitle, styles.cardTitleMobileCompact]} numberOfLines={2}>
@@ -1603,12 +1639,35 @@ const deleteTrip = async (id: string) => {
                 </View>
               </View>
 
+              {asCompanion ? (
+                <View style={styles.roleTripBadge}>
+                  <FontAwesome5 name="user-friends" size={10} color="#0f766e" />
+                  <Text style={styles.roleTripBadgeText}>Vas como acompañante</Text>
+                </View>
+              ) : isOperador ? (
+                <View style={[styles.roleTripBadge, styles.roleTripBadgeOperador]}>
+                  <FontAwesome5 name="truck" size={10} color="#1d4ed8" />
+                  <Text style={[styles.roleTripBadgeText, styles.roleTripBadgeTextOperador]}>
+                    Tu viaje asignado
+                  </Text>
+                </View>
+              ) : null}
+
               <View style={styles.mobileDestinoBlock}>
                 <Text style={styles.specLabel}>Destino</Text>
                 <Text style={styles.mobileDestinoValue} numberOfLines={2}>
                   {destinoLabel}
                 </Text>
               </View>
+
+              {asCompanion ? (
+                <View style={styles.mobileDestinoBlock}>
+                  <Text style={styles.specLabel}>Operador</Text>
+                  <Text style={styles.mobileDestinoValue} numberOfLines={1}>
+                    {conductorNombre}
+                  </Text>
+                </View>
+              ) : null}
 
               <View style={styles.mobileDestinoBlock}>
                 <Text style={styles.specLabel}>Asignado por</Text>
@@ -1637,7 +1696,7 @@ const deleteTrip = async (id: string) => {
               ) : null}
 
               <View style={styles.mobileCardActions}>
-                {canEdit ? (
+                {canView ? (
                   <TouchableOpacity
                     style={styles.mobileDetailsBtn}
                     onPress={() => openModal(item)}
@@ -1681,10 +1740,11 @@ const deleteTrip = async (id: string) => {
             styles.card,
             styles.cardFullWidth,
             isOperador && styles.cardOperadorMobile,
+            asCompanion && styles.cardCompanion,
           ]}
         >
           <View style={styles.cardIconWrap}>
-            <FontAwesome5 name="route" size={20} color="#111111" />
+            <FontAwesome5 name={asCompanion ? "user-friends" : "route"} size={20} color="#111111" />
           </View>
 
         <View style={styles.cardBody}>
@@ -1697,6 +1757,12 @@ const deleteTrip = async (id: string) => {
               <Text style={[styles.estadoText, estado.text]}>{item.estado}</Text>
             </View>
           </View>
+          {asCompanion ? (
+            <View style={styles.roleTripBadge}>
+              <FontAwesome5 name="user-friends" size={10} color="#0f766e" />
+              <Text style={styles.roleTripBadgeText}>Vas como acompañante</Text>
+            </View>
+          ) : null}
           {item.multidestino ? (
             <View style={styles.multiBadge}>
               <Text style={styles.multiBadgeText}>
@@ -1710,7 +1776,7 @@ const deleteTrip = async (id: string) => {
               <Text style={styles.specLabel}>Unidad</Text>
               <Text style={styles.specValue}>{unidadNombre || "—"}</Text>
             </View>
-            {!isOperador && (
+            {(!isOperador || asCompanion) && (
               <View style={styles.specItem}>
                 <Text style={styles.specLabel}>Conductor</Text>
                 <Text style={styles.specValue} numberOfLines={1}>{conductorNombre}</Text>
@@ -1738,10 +1804,12 @@ const deleteTrip = async (id: string) => {
               <Text style={styles.specLabel}>Llegada</Text>
               <Text style={styles.specValue}>{formatDateTimeLabel(leg.fechaLlegada || item.fechaLlegada)}</Text>
             </View>
-            <View style={[styles.specItem, styles.specItemFull]}>
-              <Text style={styles.specLabel}>Acompañante</Text>
-              <Text style={styles.specValue} numberOfLines={1}>{acompananteNombre}</Text>
-            </View>
+            {!asCompanion ? (
+              <View style={[styles.specItem, styles.specItemFull]}>
+                <Text style={styles.specLabel}>Acompañante</Text>
+                <Text style={styles.specValue} numberOfLines={1}>{acompananteNombre}</Text>
+              </View>
+            ) : null}
             <View style={[styles.specItem, styles.specItemFull]}>
               <Text style={styles.specLabel}>Asignado por</Text>
               <Text style={styles.specValue} numberOfLines={1}>{asignadoPorNombre}</Text>
@@ -1750,8 +1818,10 @@ const deleteTrip = async (id: string) => {
 
           {isOperador ? (
             <View style={styles.operadorCardFooter}>
-              {renderOperadorActions(item, true)}
-              {canEdit && getTripEstadoKey(item.estado) !== "completado" && (
+              {canEdit ? renderOperadorActions(item, true) : (
+                <Text style={styles.companionHint}>Solo lectura · acompañante</Text>
+              )}
+              {canView ? (
                 <TouchableOpacity
                   style={styles.iconAction}
                   onPress={() => openModal(item)}
@@ -1759,7 +1829,7 @@ const deleteTrip = async (id: string) => {
                 >
                   <FontAwesome5 name="eye" size={14} color="#111111" />
                 </TouchableOpacity>
-              )}
+              ) : null}
             </View>
           ) : (
             <View style={styles.cardActions}>
@@ -1796,12 +1866,34 @@ const deleteTrip = async (id: string) => {
     [trips, selectedWeekStart]
   );
 
-  const weekOptions = useMemo(() => buildWeekOptions(), []);
+  const tripsCountByWeek = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const trip of trips) {
+      if (!trip.fechaSalida) continue;
+      const date = new Date(trip.fechaSalida);
+      if (Number.isNaN(date.getTime())) continue;
+      const key = weekStartKey(getWeekStartMonday(date));
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    return counts;
+  }, [trips]);
+
+  const weekOptions = useMemo(() => {
+    return buildWeekOptions().map((opt) => ({
+      ...opt,
+      tripCount: tripsCountByWeek[opt.value] || 0,
+    }));
+  }, [tripsCountByWeek]);
+
+  const selectedWeekTripCount = tripsCountByWeek[weekStartKey(selectedWeekStart)] || 0;
+
   const weekLabel = useMemo(() => formatWeekRangeLabel(selectedWeekStart), [selectedWeekStart]);
   const weekSelectLabel = useMemo(() => {
     const current = getWeekStartMonday();
-    return formatWeekSelectLabel(selectedWeekStart, current);
-  }, [selectedWeekStart]);
+    const base = formatWeekSelectLabel(selectedWeekStart, current);
+    const n = selectedWeekTripCount;
+    return `${base} · ${n} viaje${n === 1 ? "" : "s"}`;
+  }, [selectedWeekStart, selectedWeekTripCount]);
   const selectedWeekValue = weekStartKey(selectedWeekStart);
 
   const openWeekSheet = () => setWeekSheetVisible(true);
@@ -1858,6 +1950,7 @@ const deleteTrip = async (id: string) => {
               const active = opt.value === selectedWeekValue;
               const isCurrent = opt.start.getTime() === currentMonday.getTime();
               const range = formatWeekRangeLabel(opt.start);
+              const count = opt.tripCount;
               return (
                 <Pressable
                   key={opt.value}
@@ -1878,6 +1971,23 @@ const deleteTrip = async (id: string) => {
                     </Text>
                     <View style={styles.weekOptionMetaRow}>
                       <Text style={styles.weekOptionSub}>Lun – Dom</Text>
+                      <View
+                        style={[
+                          styles.weekOptionCountBadge,
+                          count > 0 && styles.weekOptionCountBadgeFilled,
+                          active && styles.weekOptionCountBadgeActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.weekOptionCountText,
+                            count > 0 && styles.weekOptionCountTextFilled,
+                            active && styles.weekOptionCountTextActive,
+                          ]}
+                        >
+                          {count} viaje{count === 1 ? "" : "s"}
+                        </Text>
+                      </View>
                       {isCurrent ? (
                         <View style={styles.weekOptionBadge}>
                           <Text style={styles.weekOptionBadgeText}>Actual</Text>
@@ -2389,9 +2499,17 @@ const deleteTrip = async (id: string) => {
           <View style={[styles.modalActions, styles.hojaModalActions, isCompactModal && styles.modalActionsTouch]}>
             {!isAdmin ? (
               <>
-                <View style={styles.operadorStickyActions}>
-                  {renderOperadorActions(editingTrip)}
-                </View>
+                {editingTrip && toId(editingTrip.conductorId) === myUserId ? (
+                  <View style={styles.operadorStickyActions}>
+                    {renderOperadorActions(editingTrip)}
+                  </View>
+                ) : (
+                  <Text style={styles.companionHintModal}>
+                    {editingTrip && isCompanionOnTrip(editingTrip)
+                      ? "Vas como acompañante · solo puedes consultar el viaje"
+                      : "Solo lectura"}
+                  </Text>
+                )}
                 <Pressable
                   style={({ pressed }) => [
                     styles.hojaSecondaryBtn,
@@ -2598,7 +2716,7 @@ const deleteTrip = async (id: string) => {
                             setAcompanante,
                             [
                               { label: "Sin acompañante", value: "none" },
-                              ...users.map((u) => ({
+                              ...acompanantesOptions.map((u) => ({
                                 label: `${u.nombre}${u.apellido ? ` ${u.apellido}` : ""}`.trim(),
                                 value: u.id,
                               })),
@@ -2796,7 +2914,7 @@ const deleteTrip = async (id: string) => {
                                   (v) => updateDestinoExtraAt(index, { acompanante: v }),
                                   [
                                     { label: "Sin acompañante", value: "none" },
-                                    ...users.map((u) => ({
+                                    ...acompanantesOptions.map((u) => ({
                                       label: `${u.nombre}${u.apellido ? ` ${u.apellido}` : ""}`.trim(),
                                       value: u.id,
                                     })),
@@ -2973,11 +3091,13 @@ const deleteTrip = async (id: string) => {
       <View style={styles.pageHeader}>
         <View style={styles.pageHeaderText}>
           <Text style={[styles.pageTitle, isMobile && styles.pageTitleMobile]}>
-            {isOperador ? "Mis viajes" : "Viajes Registrados"}
+            {isOperador ? (isAyudante ? "Mis viajes (acompañante)" : "Mis viajes") : "Viajes Registrados"}
           </Text>
           <Text style={styles.subtitle}>
             {isOperador
-              ? "Destino, unidad, horarios y acciones de tu viaje"
+              ? isAyudante
+                ? "Viajes donde vas asignado como acompañante u operador"
+                : "Destino, unidad, horarios y acciones de tu viaje"
               : "Rutas, conductores y estado de cada viaje"}
           </Text>
         </View>
@@ -3404,6 +3524,49 @@ const styles = StyleSheet.create({
   unitDetailName: { fontSize: 14, fontWeight: "800", color: "#111111" },
   unitDetailPlaca: { fontSize: 12, fontWeight: "600", color: "#6b7280", marginTop: 2 },
   cardOperadorMobile: { padding: 14 },
+  cardFieldStaff: {
+    borderColor: "#e2e8f0",
+    backgroundColor: "#ffffff",
+  },
+  cardCompanion: {
+    borderColor: "#99f6e4",
+    backgroundColor: "#f0fdfa",
+  },
+  roleTripBadge: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#ccfbf1",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 10,
+  },
+  roleTripBadgeOperador: {
+    backgroundColor: "#dbeafe",
+  },
+  roleTripBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#0f766e",
+  },
+  roleTripBadgeTextOperador: {
+    color: "#1d4ed8",
+  },
+  companionHint: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#0f766e",
+  },
+  companionHintModal: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#0f766e",
+    textAlign: "center",
+    paddingVertical: 8,
+  },
   cardIconWrap: {width: 44,height: 44,borderRadius: 12,backgroundColor: "#ffffff",borderWidth: 1,borderColor: "#e5e7eb",alignItems: "center",justifyContent: "center",},
   cardBody: { flex: 1, minWidth: 0 },
   cardHeader: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",gap: 8,marginBottom: 10,},
@@ -3633,6 +3796,33 @@ const styles = StyleSheet.create({
   weekOptionTitleActive: { fontWeight: "800" },
   weekOptionMetaRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   weekOptionSub: { fontSize: 11, fontWeight: "600", color: "#9ca3af" },
+  weekOptionCountBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    backgroundColor: "#f3f4f6",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  weekOptionCountBadgeFilled: {
+    backgroundColor: "#ecfdf5",
+    borderColor: "#a7f3d0",
+  },
+  weekOptionCountBadgeActive: {
+    backgroundColor: "#111111",
+    borderColor: "#111111",
+  },
+  weekOptionCountText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#9ca3af",
+  },
+  weekOptionCountTextFilled: {
+    color: "#047857",
+  },
+  weekOptionCountTextActive: {
+    color: "#ffffff",
+  },
   weekOptionBadge: {
     backgroundColor: "#111111",
     borderRadius: 999,

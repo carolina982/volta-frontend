@@ -1,10 +1,12 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
+  Linking,
   Platform,
   ScrollView,
   StyleSheet,
@@ -14,6 +16,7 @@ import {
   View,
 } from "react-native";
 import { TextInput } from "react-native-paper";
+import { api, BASE_URL } from "../services/api";
 import { User } from "../types";
 
 interface PerfilPageProps {
@@ -21,28 +24,46 @@ interface PerfilPageProps {
   setCurrentUser?: (user: User) => void;
 }
 
-const roles: { value: "Admin" | "Operador"; label: string; icon: string }[] = [
-  { value: "Admin", label: "Admin", icon: "user-shield" },
-  { value: "Operador", label: "Operador", icon: "truck" },
-];
+const API_ORIGIN = BASE_URL.replace(/\/api\/?$/, "");
+
+const resolvePhotoUrl = (photoUrl?: string | null) => {
+  if (!photoUrl) return null;
+  if (photoUrl.startsWith("http") || photoUrl.startsWith("file:") || photoUrl.startsWith("blob:")) {
+    return photoUrl;
+  }
+  return `${API_ORIGIN}${photoUrl.startsWith("/") ? "" : "/"}${photoUrl}`;
+};
+
+const isLocalPhotoUri = (uri?: string | null) => {
+  if (!uri) return false;
+  return (
+    uri.startsWith("file://") ||
+    uri.startsWith("blob:") ||
+    uri.startsWith("content://") ||
+    uri.startsWith("ph://") ||
+    uri.startsWith("assets-library://") ||
+    uri.startsWith("data:")
+  );
+};
 
 export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPageProps) {
   const { width } = useWindowDimensions();
-  const isLargeScreen = width >= 768;
-
-  const initialRole =
-    currentUser?.rol === "Admin"
-      ? "Admin"
-      : ("Operador" as "Admin" | "Operador");
+  const isLargeScreen = width >= 900;
+  const isMobile = width < 768;
 
   const [nombre, setNombre] = useState(currentUser?.nombre ?? "");
   const [apellido, setApellido] = useState(currentUser?.apellido ?? "");
-  const [rol, setRol] = useState<"Admin" | "Operador">(initialRole);
   const [email, setEmail] = useState(currentUser?.email ?? "");
   const [contacto, setContacto] = useState(currentUser?.contacto ?? "");
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [formMessage, setFormMessage] = useState("");
+
+  const displayRole = currentUser?.rol || "Usuario";
+  const roleKey = displayRole.toLowerCase();
+  const isAdmin = roleKey === "admin";
+  /** Operador / Ayudante: datos bloqueados, solo foto + guardar */
+  const fieldsLocked = !isAdmin;
 
   useEffect(() => {
     if (!currentUser) return;
@@ -51,18 +72,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     setNombre(currentUser.nombre || "");
     setApellido(currentUser.apellido || "");
     setEmail(currentUser.email || "");
-    setRol(
-      currentUser.rol === "Admin" ? "Admin" : "Operador"
-    );
-
-    if (currentUser.photoUrl) {
-      const imageURL = currentUser.photoUrl.startsWith("http")
-        ? currentUser.photoUrl
-        : `https://volta-backend-px1a.onrender.com${currentUser.photoUrl}`;
-      setPhotoUri(imageURL);
-    } else {
-      setPhotoUri(null);
-    }
+    setPhotoUri(resolvePhotoUrl(currentUser.photoUrl));
   }, [currentUser]);
 
   const notify = (title: string, message: string) => {
@@ -76,63 +86,125 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
   const getInitials = () =>
     `${nombre?.[0] || ""}${apellido?.[0] || ""}`.toUpperCase() || "U";
 
+  const roleIcon = useMemo(() => {
+    if (roleKey === "admin") return "user-shield";
+    if (roleKey.includes("ayudante")) return "user-friends";
+    return "truck";
+  }, [roleKey]);
+
+  const ensureGalleryPermission = async () => {
+    if (Platform.OS === "web") return true;
+
+    const current = await ImagePicker.getMediaLibraryPermissionsAsync();
+    if (current.granted) return true;
+
+    if (current.canAskAgain === false) {
+      Alert.alert(
+        "Permiso de fotos",
+        "Activa el acceso a fotos en Ajustes del teléfono para cambiar tu imagen de perfil.",
+        [
+          { text: "Cancelar", style: "cancel" },
+          { text: "Abrir Ajustes", onPress: () => Linking.openSettings() },
+        ]
+      );
+      return false;
+    }
+
+    const requested = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (requested.granted) return true;
+
+    Alert.alert(
+      "Permiso requerido",
+      "Necesitamos acceso a tu galería para subir la foto de perfil.",
+      [
+        { text: "Cancelar", style: "cancel" },
+        { text: "Abrir Ajustes", onPress: () => Linking.openSettings() },
+      ]
+    );
+    return false;
+  };
+
   const handleSave = async () => {
     if (!currentUser || isSaving) return;
     setFormMessage("");
 
-    if (!nombre.trim() || !apellido.trim()) {
+    if (!fieldsLocked && (!nombre.trim() || !apellido.trim())) {
       setFormMessage("Nombre y apellido son obligatorios.");
+      return;
+    }
+
+    if (fieldsLocked && !isLocalPhotoUri(photoUri)) {
+      setFormMessage("Elige una nueva imagen para guardar cambios.");
       return;
     }
 
     setIsSaving(true);
     try {
       const formData = new FormData();
-      formData.append("nombre", nombre.trim());
-      formData.append("apellido", apellido.trim());
-      formData.append("email", email.trim());
-      formData.append("rol", rol);
-      formData.append("contacto", contacto.trim());
 
-      if (photoUri && (photoUri.startsWith("file://") || photoUri.startsWith("blob:"))) {
+      if (!fieldsLocked) {
+        formData.append("nombre", nombre.trim());
+        formData.append("apellido", apellido.trim());
+        formData.append("email", email.trim());
+        formData.append("contacto", contacto.trim());
+      }
+
+      if (isLocalPhotoUri(photoUri) && photoUri) {
         if (Platform.OS === "web") {
           const response = await fetch(photoUri);
           const blob = await response.blob();
-          formData.append("photo", blob, "profile.jpeg");
+          const ext = blob.type?.includes("png") ? "png" : "jpeg";
+          formData.append("photo", blob, `profile.${ext}`);
         } else {
+          const ext = photoUri.toLowerCase().includes(".png") ? "png" : "jpg";
           formData.append("photo", {
             uri: photoUri,
-            name: "profile.jpeg",
-            type: "image/jpeg",
+            name: `profile.${ext}`,
+            type: ext === "png" ? "image/png" : "image/jpeg",
           } as any);
         }
       }
 
-      const res = await fetch(
-        `https://volta-backend-px1a.onrender.com/api/users/${currentUser._id}`,
-        { method: "PATCH", body: formData }
-      );
-      const data = await res.json();
+      const endpoint = fieldsLocked
+        ? `/users/${currentUser._id}/photo`
+        : `/users/${currentUser._id}`;
 
-      if (!res.ok) {
-        throw new Error(data.message || "No se pudo actualizar el perfil");
-      }
+      const res = await api.patch(endpoint, formData, {
+        headers: Platform.OS === "web" ? { "Content-Type": "multipart/form-data" } : undefined,
+        transformRequest: Platform.OS === "web" ? undefined : [(data) => data],
+        timeout: 60000,
+      });
 
+      const data = res.data || {};
       if (data.photoUrl) {
-        setPhotoUri(`https://volta-backend-px1a.onrender.com${data.photoUrl}?t=${Date.now()}`);
+        setPhotoUri(`${resolvePhotoUrl(data.photoUrl)}?t=${Date.now()}`);
       }
 
       if (setCurrentUser) {
-        const updatedPhotoUrl = data.photoUrl
-          ? `https://volta-backend-px1a.onrender.com${data.photoUrl}?t=${Date.now()}`
-          : currentUser.photoUrl;
-        setCurrentUser({ ...currentUser, ...data, photoUrl: updatedPhotoUrl });
+        setCurrentUser({
+          ...currentUser,
+          ...data,
+          nombre: fieldsLocked ? currentUser.nombre : data.nombre ?? nombre,
+          apellido: fieldsLocked ? currentUser.apellido : data.apellido ?? apellido,
+          email: fieldsLocked ? currentUser.email : data.email ?? email,
+          contacto: fieldsLocked ? currentUser.contacto : data.contacto ?? contacto,
+          rol: currentUser.rol,
+          photoUrl: data.photoUrl
+            ? `${resolvePhotoUrl(data.photoUrl)}?t=${Date.now()}`
+            : currentUser.photoUrl,
+        });
       }
 
-      notify("Éxito", "Perfil actualizado correctamente");
+      notify(
+        "Éxito",
+        fieldsLocked ? "Foto actualizada correctamente" : "Perfil actualizado correctamente"
+      );
     } catch (error: any) {
       console.error(error);
-      const message = error.message || "No se pudo actualizar el perfil";
+      const message =
+        error?.response?.data?.message ||
+        error?.message ||
+        "No se pudo actualizar el perfil";
       setFormMessage(message);
       notify("Error", message);
     } finally {
@@ -141,19 +213,24 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
   };
 
   const pickerImage = async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      notify("Permiso requerido", "Necesitamos acceso a tus fotos");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.7,
-    });
-    if (!result.canceled) {
-      setPhotoUri(result.assets[0].uri);
+    try {
+      const ok = await ensureGalleryPermission();
+      if (!ok) return;
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setPhotoUri(result.assets[0].uri);
+        setFormMessage("");
+      }
+    } catch (error) {
+      console.error(error);
+      notify("Error", "No se pudo abrir la galería de fotos");
     }
   };
 
@@ -162,9 +239,10 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     underlineColor: "transparent",
     activeUnderlineColor: "transparent",
     dense: true,
-    contentStyle: styles.inputContent,
-    style: styles.input,
+    contentStyle: [styles.inputContent, fieldsLocked && styles.inputContentLocked],
+    style: [styles.input, fieldsLocked && styles.inputLocked],
     placeholderTextColor: "#9ca3af",
+    editable: !fieldsLocked,
   };
 
   const renderField = (label: string, field: React.ReactNode) => (
@@ -184,158 +262,181 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
   }
 
   return (
-    <ScrollView
-      contentContainerStyle={styles.scrollContent}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 88 : 24}
     >
-      <View style={styles.container}>
-        <View style={styles.pageHeader}>
-          <View style={styles.pageHeaderText}>
-            <Text style={styles.title}>Mi Perfil</Text>
-            <Text style={styles.subtitle}>Actualiza tu información personal</Text>
-          </View>
-          <View style={styles.roleBadge}>
-            <FontAwesome5
-              name={rol === "Admin" ? "user-shield" : "truck"}
-              size={10}
-              color="#ffffff"
-            />
-            <Text style={styles.roleBadgeText}>{rol}</Text>
-          </View>
-        </View>
-
-        <View style={[styles.profilePanel, isLargeScreen && styles.profilePanelDesktop]}>
-          <View style={styles.avatarSection}>
-            {photoUri ? (
-              <Image source={{ uri: photoUri }} style={styles.avatarImage} />
-            ) : (
-              <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarText}>{getInitials()}</Text>
-              </View>
-            )}
-            <TouchableOpacity
-              style={styles.changePhotoButton}
-              onPress={pickerImage}
-              activeOpacity={0.85}
-            >
-              <FontAwesome5 name="camera" size={12} color="#111111" />
-              <Text style={styles.changePhotoText}>Cambiar Imagen</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={[styles.formSection, isLargeScreen && styles.formSectionDesktop]}>
-            <View style={isLargeScreen ? styles.fieldRow : undefined}>
-              <View style={isLargeScreen ? styles.fieldHalf : undefined}>
-                {renderField(
-                  "Nombre",
-                  <TextInput
-                    placeholder="Nombre"
-                    value={nombre}
-                    onChangeText={setNombre}
-                    {...inputProps}
-                  />
-                )}
-              </View>
-              <View style={isLargeScreen ? styles.fieldHalf : undefined}>
-                {renderField(
-                  "Apellido",
-                  <TextInput
-                    placeholder="Apellido"
-                    value={apellido}
-                    onChangeText={setApellido}
-                    {...inputProps}
-                  />
-                )}
-              </View>
+      <ScrollView
+        style={styles.flex}
+        contentContainerStyle={[
+          styles.scrollContent,
+          isMobile && styles.scrollContentMobile,
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        nestedScrollEnabled
+      >
+        <View style={[styles.container, isMobile && styles.containerMobile]}>
+          <View style={styles.pageHeader}>
+            <View style={styles.pageHeaderText}>
+              <Text style={[styles.title, isMobile && styles.titleMobile]}>Mi Perfil</Text>
+              <Text style={styles.subtitle}>
+                {fieldsLocked
+                  ? "Puedes cambiar tu foto de perfil"
+                  : "Actualiza tu información personal"}
+              </Text>
             </View>
-
-            {renderField(
-              "Email",
-              <TextInput
-                placeholder="Correo electrónico"
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                {...inputProps}
-              />
-            )}
-
-            {renderField(
-              "Contacto",
-              <TextInput
-                placeholder="Teléfono de contacto"
-                value={contacto}
-                onChangeText={setContacto}
-                keyboardType="phone-pad"
-                {...inputProps}
-              />
-            )}
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>Rol</Text>
-              <View style={styles.roleSelector}>
-                {roles.map((item) => {
-                  const isActive = rol === item.value;
-                  return (
-                    <TouchableOpacity
-                      key={item.value}
-                      style={[styles.rolePill, isActive && styles.rolePillActive]}
-                      onPress={() => setRol(item.value)}
-                      activeOpacity={0.85}
-                    >
-                      <FontAwesome5
-                        name={item.icon as any}
-                        size={12}
-                        color={isActive ? "#ffffff" : "#6b7280"}
-                      />
-                      <Text style={[styles.rolePillText, isActive && styles.rolePillTextActive]}>
-                        {item.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+            <View style={styles.roleBadge}>
+              <FontAwesome5 name={roleIcon} size={10} color="#ffffff" />
+              <Text style={styles.roleBadgeText}>{displayRole}</Text>
             </View>
+          </View>
 
-            {formMessage ? (
-              <View style={styles.formMessageBox}>
-                <FontAwesome5 name="exclamation-circle" size={12} color="#dc2626" />
-                <Text style={styles.formMessage}>{formMessage}</Text>
-              </View>
-            ) : null}
+          {fieldsLocked ? (
+            <View style={styles.lockBanner}>
+              <FontAwesome5 name="lock" size={12} color="#64748b" />
+              <Text style={styles.lockBannerText}>
+                Tus datos están bloqueados. Solo puedes cambiar la foto y guardar.
+              </Text>
+            </View>
+          ) : null}
 
-            <TouchableOpacity
-              style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
-              onPress={handleSave}
-              disabled={isSaving}
-              activeOpacity={0.85}
-            >
-              {isSaving ? (
-                <ActivityIndicator size="small" color="#ffffff" />
+          <View
+            style={[
+              styles.profilePanel,
+              isLargeScreen && styles.profilePanelDesktop,
+              isMobile && styles.profilePanelMobile,
+            ]}
+          >
+            <View style={[styles.avatarSection, isMobile && styles.avatarSectionMobile]}>
+              {photoUri ? (
+                <Image source={{ uri: photoUri }} style={styles.avatarImage} />
               ) : (
-                <>
-                  <FontAwesome5 name="save" size={14} color="#ffffff" />
-                  <Text style={styles.saveButtonText}>Guardar Cambios</Text>
-                </>
+                <View style={styles.avatarPlaceholder}>
+                  <Text style={styles.avatarText}>{getInitials()}</Text>
+                </View>
               )}
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.changePhotoButton}
+                onPress={pickerImage}
+                activeOpacity={0.85}
+              >
+                <FontAwesome5 name="camera" size={12} color="#111111" />
+                <Text style={styles.changePhotoText}>Cambiar Imagen</Text>
+              </TouchableOpacity>
+              <Text style={styles.photoHint}>
+                {Platform.OS === "web"
+                  ? "JPG o PNG · se guarda al pulsar Guardar"
+                  : "Si pide permiso, elige Permitir · luego Guardar"}
+              </Text>
+            </View>
+
+            <View style={[styles.formSection, isLargeScreen && styles.formSectionDesktop]}>
+              <View style={isLargeScreen ? styles.fieldRow : styles.fieldStack}>
+                <View style={isLargeScreen ? styles.fieldHalf : styles.fieldFull}>
+                  {renderField(
+                    "Nombre",
+                    <TextInput
+                      placeholder="Nombre"
+                      value={nombre}
+                      onChangeText={setNombre}
+                      returnKeyType="next"
+                      {...inputProps}
+                    />
+                  )}
+                </View>
+                <View style={isLargeScreen ? styles.fieldHalf : styles.fieldFull}>
+                  {renderField(
+                    "Apellido",
+                    <TextInput
+                      placeholder="Apellido"
+                      value={apellido}
+                      onChangeText={setApellido}
+                      returnKeyType="next"
+                      {...inputProps}
+                    />
+                  )}
+                </View>
+              </View>
+
+              {renderField(
+                "Email",
+                <TextInput
+                  placeholder="Correo electrónico"
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  returnKeyType="next"
+                  {...inputProps}
+                />
+              )}
+
+              {renderField(
+                "Contacto",
+                <TextInput
+                  placeholder="Teléfono de contacto"
+                  value={contacto}
+                  onChangeText={setContacto}
+                  keyboardType="phone-pad"
+                  returnKeyType="done"
+                  {...inputProps}
+                />
+              )}
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Rol</Text>
+                <View style={styles.roleReadonly}>
+                  <FontAwesome5 name={roleIcon} size={13} color="#111111" />
+                  <Text style={styles.roleReadonlyText}>{displayRole}</Text>
+                </View>
+              </View>
+
+              {formMessage ? (
+                <View style={styles.formMessageBox}>
+                  <FontAwesome5 name="exclamation-circle" size={12} color="#dc2626" />
+                  <Text style={styles.formMessage}>{formMessage}</Text>
+                </View>
+              ) : null}
+
+              <TouchableOpacity
+                style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
+                onPress={handleSave}
+                disabled={isSaving}
+                activeOpacity={0.85}
+              >
+                {isSaving ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <>
+                    <FontAwesome5 name="save" size={14} color="#ffffff" />
+                    <Text style={styles.saveButtonText}>
+                      {fieldsLocked ? "Guardar foto" : "Guardar Cambios"}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollContent: { flexGrow: 1, paddingBottom: 24 },
+  flex: { flex: 1 },
+  scrollContent: { flexGrow: 1, paddingBottom: 28 },
+  scrollContentMobile: { paddingBottom: 120 },
   container: {
     flex: 1,
     paddingHorizontal: 0,
     paddingVertical: 4,
     backgroundColor: "transparent",
   },
+  containerMobile: { paddingHorizontal: 2 },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
@@ -352,6 +453,7 @@ const styles = StyleSheet.create({
   },
   pageHeaderText: { flex: 1, paddingRight: 12 },
   title: { fontSize: 24, fontWeight: "800", color: "#111111", letterSpacing: 0.2 },
+  titleMobile: { fontSize: 22 },
   subtitle: { fontSize: 13, color: "#6b7280", marginTop: 4 },
   roleBadge: {
     flexDirection: "row",
@@ -363,6 +465,25 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   roleBadgeText: { color: "#ffffff", fontWeight: "700", fontSize: 12 },
+  lockBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  lockBannerText: {
+    flex: 1,
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "600",
+    lineHeight: 17,
+  },
   profilePanel: {
     backgroundColor: "#ffffff",
     borderRadius: 14,
@@ -379,23 +500,34 @@ const styles = StyleSheet.create({
     gap: 32,
     padding: 28,
   },
+  profilePanelMobile: {
+    padding: 16,
+    gap: 8,
+  },
   avatarSection: {
     alignItems: "center",
     marginBottom: 8,
-    ...(Platform.OS === "web" ? {} : { marginBottom: 20 }),
+  },
+  avatarSectionMobile: {
+    marginBottom: 18,
+    paddingBottom: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+    width: "100%",
   },
   avatarImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 108,
+    height: 108,
+    borderRadius: 54,
     borderWidth: 2,
     borderColor: "#e5e7eb",
     marginBottom: 14,
+    backgroundColor: "#f3f4f6",
   },
   avatarPlaceholder: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 108,
+    height: 108,
+    borderRadius: 54,
     backgroundColor: "#111111",
     alignItems: "center",
     justifyContent: "center",
@@ -415,11 +547,19 @@ const styles = StyleSheet.create({
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   changePhotoText: { color: "#111111", fontWeight: "700", fontSize: 13 },
-  formSection: { flex: 1 },
+  photoHint: {
+    marginTop: 8,
+    fontSize: 11,
+    color: "#9ca3af",
+    fontWeight: "600",
+  },
+  formSection: { flex: 1, width: "100%" },
   formSectionDesktop: { paddingTop: 8 },
   fieldRow: { flexDirection: "row", gap: 12 },
+  fieldStack: { width: "100%" },
   fieldHalf: { flex: 1 },
-  fieldGroup: { marginBottom: 14 },
+  fieldFull: { width: "100%" },
+  fieldGroup: { marginBottom: 14, width: "100%" },
   fieldLabel: {
     fontSize: 12,
     fontWeight: "700",
@@ -429,30 +569,41 @@ const styles = StyleSheet.create({
   },
   input: {
     width: "100%",
-    height: 44,
+    minHeight: 48,
     backgroundColor: "#fafafa",
     borderRadius: 10,
     borderWidth: 1,
     borderColor: "#e5e7eb",
     marginBottom: 0,
   },
+  inputLocked: {
+    backgroundColor: "#f1f5f9",
+    borderColor: "#e2e8f0",
+  },
   inputContent: { color: "#111111", fontWeight: "600", fontSize: 14 },
-  roleSelector: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  rolePill: {
+  inputContentLocked: { color: "#64748b" },
+  roleReadonly: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingVertical: 10,
+    gap: 8,
+    paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 999,
-    borderWidth: 1.5,
+    borderRadius: 10,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
     borderColor: "#e5e7eb",
-    backgroundColor: "#fafafa",
-    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
-  rolePillActive: { backgroundColor: "#111111", borderColor: "#111111" },
-  rolePillText: { fontSize: 13, fontWeight: "700", color: "#374151" },
-  rolePillTextActive: { color: "#ffffff" },
+  roleReadonlyText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#111111",
+  },
+  roleHelp: {
+    marginTop: 6,
+    fontSize: 11,
+    color: "#9ca3af",
+    fontWeight: "600",
+  },
   formMessageBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -473,8 +624,9 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: "#111111",
     borderRadius: 999,
-    paddingVertical: 14,
+    paddingVertical: 15,
     marginTop: 6,
+    minHeight: 52,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   saveButtonDisabled: { opacity: 0.6 },

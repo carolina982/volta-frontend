@@ -18,13 +18,20 @@
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
-        }
+        },
+        "NSPhotoLibraryUsageDescription": "Volta necesita acceso a tus fotos para actualizar tu imagen de perfil.",
+        "NSPhotoLibraryAddUsageDescription": "Volta necesita guardar imágenes de perfil.",
+        "NSCameraUsageDescription": "Volta necesita acceso a la cámara para tomar tu foto de perfil."
       }
     },
     "android": {
       "permissions": [
         "INTERNET",
-        "ACCESS_NETWORK_STATE"
+        "ACCESS_NETWORK_STATE",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -43,6 +50,13 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Volta necesita acceso a tus fotos para actualizar tu imagen de perfil.",
+          "cameraPermission": "Volta necesita acceso a la cámara para tomar tu foto de perfil."
+        }
+      ],
       [
         "expo-notifications",
         {

@@ -40,9 +40,10 @@ export default function Dashboard() {
   const [isMounted, setIsMounted] = useState(false);
   const { width } = useWindowDimensions();
   const router = useRouter();
-  const drawerWidth = Math.min(Math.max(width * 0.82, 300), 360);
+  const drawerWidth = Math.min(Math.max(width * 0.88, 320), 400);
   const drawerSlide = useRef(new Animated.Value(0)).current;
   const overlayFade = useRef(new Animated.Value(0)).current;
+  const drawerScale = useRef(new Animated.Value(0.96)).current;
   const itemAnims = useRef(
     Array.from({ length: 8 }, () => new Animated.Value(0))
   ).current;
@@ -58,45 +59,58 @@ export default function Dashboard() {
     setMenuVisible(true);
     drawerSlide.setValue(0);
     overlayFade.setValue(0);
+    drawerScale.setValue(0.96);
     itemAnims.forEach((anim) => anim.setValue(0));
 
     Animated.parallel([
       Animated.timing(overlayFade, {
         toValue: 1,
-        duration: 220,
+        duration: 260,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
       Animated.spring(drawerSlide, {
         toValue: 1,
-        friction: 9,
+        friction: 8,
+        tension: 68,
+        useNativeDriver: true,
+      }),
+      Animated.spring(drawerScale, {
+        toValue: 1,
+        friction: 8,
         tension: 70,
         useNativeDriver: true,
       }),
       Animated.stagger(
-        45,
+        40,
         itemAnims.map((anim) =>
           Animated.timing(anim, {
             toValue: 1,
-            duration: 280,
+            duration: 320,
             easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
           })
         )
       ),
     ]).start();
-  }, [drawerSlide, overlayFade, itemAnims]);
+  }, [drawerSlide, overlayFade, drawerScale, itemAnims]);
 
   const closeMobileMenu = useCallback(() => {
     Animated.parallel([
       Animated.timing(overlayFade, {
         toValue: 0,
-        duration: 180,
+        duration: 200,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: true,
       }),
       Animated.timing(drawerSlide, {
         toValue: 0,
+        duration: 240,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(drawerScale, {
+        toValue: 0.97,
         duration: 220,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: true,
@@ -107,7 +121,7 @@ export default function Dashboard() {
         setMenuRendered(false);
       }
     });
-  }, [drawerSlide, overlayFade]);
+  }, [drawerSlide, overlayFade, drawerScale]);
 
   const handleTabPress = useCallback((item: TabType) => {
     setTab(item);
@@ -367,7 +381,6 @@ export default function Dashboard() {
         <>
           {/* ================= SIDEBAR WEB ================= */}
           <View style={styles.sideMenu}>
-            
             <View style={styles.logoContainer}>
               <Image
                 source={require("../assets/images/logo-volta.jpeg")}
@@ -377,8 +390,7 @@ export default function Dashboard() {
             </View>
             <Divider style={styles.divider} />
 
-            {/* Lista del Menú */}
-            <View style={{ flex: 1 }}>
+            <View style={styles.sideMenuList}>
               {menuItems.map((item) => {
                 const isActive = tab === item;
                 return (
@@ -386,25 +398,25 @@ export default function Dashboard() {
                     key={item} 
                     style={[styles.sideTab, isActive && styles.sideTabActive]} 
                     onPress={() => handleTabPress(item)}
-                    // @ts-ignore: Propiedad nativa para tooltips en navegadores web (Prioridad 3)
+                    // @ts-ignore
                     dataSet={Platform.OS === 'web' ? { title: getTabTooltip(item) } : undefined}
                     title={Platform.OS === 'web' ? getTabTooltip(item) : undefined}
                   >
                     {isActive && <View style={styles.activeIndicatorLine} />}
                     
                     <View style={styles.menuItemLeftSection}>
-                      <FontAwesome5 
-                        name={getTabIcon(item)} 
-                        size={16} 
-                        color={isActive ? "#111111" : "#6b7280"} 
-                        style={styles.menuIcon} 
-                      />
+                      <View style={[styles.menuIconWrap, isActive && styles.menuIconWrapActive]}>
+                        <FontAwesome5 
+                          name={getTabIcon(item)} 
+                          size={16} 
+                          color={isActive ? "#111111" : "#6b7280"} 
+                        />
+                      </View>
                       <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
                         {item}
                       </Text>
                     </View>
 
-                    {/* Prioridad 2: Badge/Contadores dinámicos en el Menú */}
                     {item === "Viajes" && viajesActivos > 0 && (
                       <Badge style={styles.badgeViajes}>{viajesActivos}</Badge>
                     )}
@@ -426,7 +438,9 @@ export default function Dashboard() {
                 <FontAwesome5 name="sign-out-alt" size={15} color="#dc2626" style={styles.menuIcon} />
                 <Text style={styles.logoutTextWeb}>Cerrar Sesión</Text>
               </TouchableOpacity>
-              <Text style={styles.footerText}>v1.0.4 ©️ 2026</Text>
+              <View style={styles.footerBlock}>
+                <Text style={styles.footerMeta}>v1.0.4 · © 2026</Text>
+              </View>
             </View>
           </View>
 
@@ -526,6 +540,7 @@ export default function Dashboard() {
                           outputRange: [-drawerWidth, 0],
                         }),
                       },
+                      { scale: drawerScale },
                     ],
                   },
                 ]}
@@ -635,6 +650,9 @@ export default function Dashboard() {
                       <FontAwesome5 name="sign-out-alt" size={15} color="#dc2626" />
                       <Text style={styles.drawerLogoutText}>Cerrar Sesión</Text>
                     </TouchableOpacity>
+                    <View style={styles.footerBlock}>
+                      <Text style={styles.footerMeta}>v1.0.4 · © 2026</Text>
+                    </View>
                   </Animated.View>
                 </SafeAreaView>
               </Animated.View>
@@ -671,35 +689,83 @@ const styles = StyleSheet.create({
   
   /* ===== SIDEBAR WEB ===== */
   sideMenu: {
-    width: 280,
+    width: 320,
     backgroundColor: "#ffffff",
-    padding: 20,
+    paddingVertical: 24,
+    paddingHorizontal: 18,
     height: "100%",
     justifyContent: "space-between",
     borderRightWidth: 1,
     borderRightColor: "#e5e7eb",
+    ...(Platform.OS === "web"
+      ? { boxShadow: "4px 0 24px rgba(15, 23, 42, 0.04)" as any }
+      : {}),
   },
-  logoContainer: { alignItems: "center", marginBottom: 5, paddingHorizontal: 5 },
-  logoImage: { width: 200, height: 72 },
+  logoContainer: {
+    alignItems: "center",
+    marginBottom: 8,
+    paddingHorizontal: 8,
+    paddingTop: 4,
+  },
+  logoImage: { width: 228, height: 82 },
   avatarContainer: { flexDirection: "row", alignItems: "center", paddingVertical: 5, paddingHorizontal: 5 },
   userInfo: { marginLeft: 12, flex: 1 },
   name: { fontSize: 16, fontWeight: "bold", color: "#111111" },
   role: { fontSize: 13, color: "#2563eb", marginTop: 2, fontWeight: "500" },
-  divider: { backgroundColor: "#e5e7eb", marginVertical: 15 },
+  divider: { backgroundColor: "#eef2f7", marginVertical: 18, height: 1 },
+  sideMenuList: { flex: 1, gap: 4 },
   
-  sideTab:{flexDirection: "row", alignItems: "center",justifyContent: "space-between",padding: 14, marginVertical: 4,borderRadius: 10,position: "relative",...(Platform.OS === "web" ? { cursor: "pointer" } : {}),},
-  menuItemLeftSection: { flexDirection: "row",alignItems: "center",},
-  activeIndicatorLine: {position: "absolute",left: 0,top: "30%",height: "40%",width: 4,backgroundColor: "#111111",borderRadius: 2 },
-  sideTabActive: { backgroundColor: "rgba(0, 0, 0, 0.08)" },
+  sideTab: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginVertical: 2,
+    borderRadius: 12,
+    position: "relative",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  menuItemLeftSection: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1, minWidth: 0 },
+  menuIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#eef2f7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  menuIconWrapActive: {
+    backgroundColor: "#ffffff",
+    borderColor: "#e5e7eb",
+  },
+  activeIndicatorLine: {
+    position: "absolute",
+    left: 0,
+    top: "28%",
+    height: "44%",
+    width: 3,
+    backgroundColor: "#111111",
+    borderRadius: 2,
+  },
+  sideTabActive: { backgroundColor: "rgba(15, 23, 42, 0.06)" },
   menuIcon: { width: 25, textAlign: "center" },
-  tabText: { fontSize: 15, color: "#4b5563", marginLeft: 5, fontWeight: "600" },
+  tabText: { fontSize: 15, color: "#4b5563", fontWeight: "600", flexShrink: 1 },
   tabTextActive: { color: "#111111", fontWeight: "800" },
   
   // Estilos de los Badges (Web)
   badgeViajes: { backgroundColor: "#10b981", color: "#fff", fontWeight: "700" },
   badgeViaticos: { backgroundColor: "#f59e0b", color: "#1e293b", fontWeight: "700" },
 
-  sidebarBottom: { marginTop: 20 },
+  sidebarBottom: {
+    marginTop: 20,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#f1f5f9",
+    gap: 14,
+  },
   logoutButton: { flexDirection: "row", alignItems: "center", padding: 12, backgroundColor: "#ef4444", borderRadius: 8, justifyContent: "center" },
   logoutText: { color: "#fff", fontWeight: "bold", marginLeft: 5 },
   logoutButtonWeb: {
@@ -715,6 +781,23 @@ const styles = StyleSheet.create({
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   logoutTextWeb: { color: "#dc2626", fontWeight: "700", marginLeft: 6, fontSize: 14 },
+  footerBlock: {
+    alignItems: "center",
+    gap: 2,
+  },
+  footerBrand: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#111111",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  footerMeta: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#9ca3af",
+    letterSpacing: 0.2,
+  },
   footerText: { color: "#9ca3af", fontSize: 11, textAlign: "center", marginTop: 10 },
 
   /* ===== CONTENIDO DERECHO (WEB) ===== */
@@ -957,19 +1040,19 @@ const styles = StyleSheet.create({
   drawer: {
     height: "100%",
     backgroundColor: "#ffffff",
-    paddingHorizontal: 18,
-    paddingBottom: 16,
+    paddingHorizontal: 20,
+    paddingBottom: 18,
     zIndex: 2,
     borderRightWidth: 1,
     borderRightColor: "#e5e7eb",
     ...(Platform.OS === "web"
-      ? { boxShadow: "8px 0 28px rgba(0,0,0,0.12)" as any }
+      ? { boxShadow: "12px 0 40px rgba(15, 23, 42, 0.18)" as any }
       : {
-          shadowColor: "#000",
-          shadowOpacity: 0.18,
-          shadowRadius: 16,
-          shadowOffset: { width: 4, height: 0 },
-          elevation: 20,
+          shadowColor: "#0f172a",
+          shadowOpacity: 0.22,
+          shadowRadius: 24,
+          shadowOffset: { width: 6, height: 0 },
+          elevation: 24,
         }),
   },
   drawerInner: {
@@ -979,25 +1062,25 @@ const styles = StyleSheet.create({
   },
   drawerLogoBlock: {
     alignItems: "center",
-    paddingTop: 10,
-    paddingBottom: 16,
+    paddingTop: 14,
+    paddingBottom: 18,
     backgroundColor: "#ffffff",
   },
   drawerLogo: {
-    width: "90%",
-    maxWidth: 240,
-    height: 72,
+    width: "92%",
+    maxWidth: 280,
+    height: 84,
   },
   drawerDividerLine: {
     height: 1,
-    backgroundColor: "#e5e7eb",
+    backgroundColor: "#eef2f7",
     marginBottom: 10,
   },
   drawerMenuList: { flex: 1 },
   drawerMenuContent: { paddingTop: 4, paddingBottom: 16, gap: 6 },
   overlayBackground: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.42)",
+    backgroundColor: "rgba(15, 23, 42, 0.48)",
   },
 
   drawerItem: {
@@ -1011,20 +1094,23 @@ const styles = StyleSheet.create({
     marginVertical: 1,
   },
   drawerItemActive: {
-    backgroundColor: "rgba(0, 0, 0, 0.08)",
+    backgroundColor: "rgba(15, 23, 42, 0.06)",
   },
   drawerIconWrap: {
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: "#f3f4f6",
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#eef2f7",
     alignItems: "center",
     justifyContent: "center",
   },
   drawerIconWrapActive: {
-    backgroundColor: "rgba(0, 0, 0, 0.1)",
+    backgroundColor: "#ffffff",
+    borderColor: "#e5e7eb",
   },
-  drawerText: { fontSize: 17, color: "#374151", marginLeft: 12, fontWeight: "600" },
+  drawerText: { fontSize: 16, color: "#4b5563", marginLeft: 12, fontWeight: "600" },
   drawerTextActive: { color: "#111111", fontWeight: "800" },
   drawerLogoutButton: {
     flexDirection: "row",
