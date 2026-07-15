@@ -3,12 +3,11 @@ import React, { createContext, ReactNode, useContext, useEffect, useState } from
 import { Platform } from "react-native";
 import { Trip, Unit, User, Viatico } from "../types";
 
-
 // ================== PARCHE DE PORTABILIDAD (ARREGLA EL ERROR ROJO) ==================
-if (Platform.OS !== 'web') {
-  if (typeof global.HTMLAnchorElement === 'undefined') {
+if (Platform.OS !== "web") {
+  if (typeof global.HTMLAnchorElement === "undefined") {
     // @ts-ignore
-    global.HTMLAnchorElement = class {}; 
+    global.HTMLAnchorElement = class {};
   }
 }
 // ====================================================================================
@@ -20,10 +19,12 @@ interface StoreContextProps {
   trips: Trip[];
   units: Unit[];
   viatics: Viatico[];
+  /** false mientras se restaura la sesión desde storage */
+  isHydrated: boolean;
 
   setCurrentUser: (user: User | null) => void;
   setToken: (token: string | null) => void;
- 
+
   addUser: (user: User) => void;
   updateUser: (user: User) => void;
   removeUser: (userId: string) => void;
@@ -46,6 +47,36 @@ interface StoreContextProps {
 
 const StoreContext = createContext<StoreContextProps>({} as StoreContextProps);
 
+const readStorage = async (key: string): Promise<string | null> => {
+  if (Platform.OS === "web") {
+    return localStorage.getItem(key);
+  }
+  if (AsyncStorage && typeof AsyncStorage.getItem === "function") {
+    return AsyncStorage.getItem(key);
+  }
+  return null;
+};
+
+const writeStorage = async (key: string, value: string) => {
+  if (Platform.OS === "web") {
+    localStorage.setItem(key, value);
+    return;
+  }
+  if (AsyncStorage && typeof AsyncStorage.setItem === "function") {
+    await AsyncStorage.setItem(key, value);
+  }
+};
+
+const removeStorage = async (key: string) => {
+  if (Platform.OS === "web") {
+    localStorage.removeItem(key);
+    return;
+  }
+  if (AsyncStorage && typeof AsyncStorage.removeItem === "function") {
+    await AsyncStorage.removeItem(key);
+  }
+};
+
 export const StoreProvider = ({ children }: { children: ReactNode }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -53,61 +84,76 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [viatics, setViatics] = useState<Viatico[]>([]);
+  const [isHydrated, setIsHydrated] = useState(false);
 
-  //  Carga de datos segura contra fallos del puente nativo de AsyncStorage
+  // Carga de sesión — no guardar nada hasta terminar esto
   useEffect(() => {
+    let cancelled = false;
+
     const loadData = async () => {
       try {
-        if (Platform.OS === "web") {
-          const dataStr = localStorage.getItem("storeData");
-          if (dataStr) {
-            const parsed = JSON.parse(dataStr);
-            setUsers(parsed.users || []);
-            setTrips(parsed.trips || []);
-            setUnits(parsed.units || []);
-            setViatics(parsed.viatics || []);
-            setCurrentUser(parsed.currentUser || null);
-          }
-        } else {
-          if (AsyncStorage && typeof AsyncStorage.getItem === "function") {
-            const dataStr = await AsyncStorage.getItem("storeData");
-            if (dataStr) {
-              const parsed = JSON.parse(dataStr);
-              setUsers(parsed.users || []);
-              setTrips(parsed.trips || []);
-              setUnits(parsed.units || []);
-              setViatics(parsed.viatics || []);
-              setCurrentUser(parsed.currentUser || null);
-            }
+        const [dataStr, savedToken] = await Promise.all([
+          readStorage("storeData"),
+          readStorage("token"),
+        ]);
+
+        if (cancelled) return;
+
+        if (dataStr) {
+          const parsed = JSON.parse(dataStr);
+          setUsers(parsed.users || []);
+          setTrips(parsed.trips || []);
+          setUnits(parsed.units || []);
+          setViatics(parsed.viatics || []);
+          setCurrentUser(parsed.currentUser || null);
+          if (parsed.token) {
+            setToken(parsed.token);
           }
         }
+
+        if (savedToken) {
+          setToken(savedToken);
+        }
       } catch (error) {
-        console.warn("AsyncStorage no inicializado en loadData:", error);
+        console.warn("Error restaurando sesión:", error);
+      } finally {
+        if (!cancelled) setIsHydrated(true);
       }
     };
+
     loadData();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
- 
-  //  Guardado de datos con validación explícita de seguridad
+  // Guardado — solo después de hidratar para no pisar la sesión con null
   useEffect(() => {
+    if (!isHydrated) return;
+
     const saveData = async () => {
       try {
-        const data = JSON.stringify({ currentUser, users, trips, units, viatics });
-        if (Platform.OS === "web") {
-          localStorage.setItem("storeData", data);
+        const data = JSON.stringify({
+          currentUser,
+          token,
+          users,
+          trips,
+          units,
+          viatics,
+        });
+        await writeStorage("storeData", data);
+        if (token) {
+          await writeStorage("token", token);
         } else {
-          if (AsyncStorage && typeof AsyncStorage.setItem === "function") {
-            await AsyncStorage.setItem("storeData", data);
-          }
+          await removeStorage("token");
         }
       } catch (error) {
-        console.warn("AsyncStorage no inicializado en saveData:", error);
+        console.warn("Error guardando sesión:", error);
       }
     };
-    saveData();
-  }, [currentUser, users, trips, units, viatics]);
 
+    saveData();
+  }, [isHydrated, currentUser, token, users, trips, units, viatics]);
 
   const addUser = (user: User) => setUsers((prev) => [...prev, user]);
   const updateUser = (updatedUser: User) =>
@@ -119,7 +165,7 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   const updateTrip = (updatedTrip: Trip) =>
     setTrips((prev) => prev.map((t) => (t.id === updatedTrip.id ? updatedTrip : t)));
   const removeTrip = (tripId: string) =>
-    setTrips((prev) => prev.filter((u) => u.id !== tripId)); // Corregido tipado lógico implícito
+    setTrips((prev) => prev.filter((u) => u.id !== tripId));
 
   const addViatic = (viatic: Viatico) => setViatics((prev) => [...prev, viatic]);
   const updateViatic = (updatedViatic: Viatico) =>
@@ -133,23 +179,21 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   const removeUnit = (unitId: string) =>
     setUnits((prev) => prev.filter((u) => u.id !== unitId));
 
-  const login = (user: User, token: string) => { setCurrentUser(user); setToken(token); };
-  
-  // CORREGIDO: Borrado seguro al hacer logout
-  
+  const login = (user: User, tokenValue: string) => {
+    setCurrentUser(user);
+    setToken(tokenValue);
+  };
+
   const logout = async () => {
     try {
-      if (Platform.OS === "web") {
-        localStorage.removeItem("storeData");
-      } else {
-        if (AsyncStorage && typeof AsyncStorage.removeItem === "function") {
-          await AsyncStorage.removeItem("storeData");
-        }
-      }
+      await removeStorage("storeData");
+      await removeStorage("token");
       setCurrentUser(null);
       setToken(null);
     } catch (error) {
-      console.warn("AsyncStorage no inicializado en logout:", error);
+      console.warn("Error al cerrar sesión:", error);
+      setCurrentUser(null);
+      setToken(null);
     }
   };
 
@@ -158,16 +202,27 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
       value={{
         currentUser,
         token,
-        users, 
-        trips, 
-        units, 
+        users,
+        trips,
+        units,
         viatics,
+        isHydrated,
         setCurrentUser,
-        setToken, 
-        addUser, updateUser, removeUser,
-        addTrip, updateTrip, removeTrip, addViatic,
-        updateViatic, removeViatic, addUnit, updateUnit,
-        removeUnit, login, logout,
+        setToken,
+        addUser,
+        updateUser,
+        removeUser,
+        addTrip,
+        updateTrip,
+        removeTrip,
+        addViatic,
+        updateViatic,
+        removeViatic,
+        addUnit,
+        updateUnit,
+        removeUnit,
+        login,
+        logout,
       }}
     >
       {children}
@@ -175,34 +230,24 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   );
 };
 
+export function useStore() {
+  return useContext(StoreContext);
+}
+
 //  Funciones auxiliares protegidas para portabilidad nativa global
 export async function setItem(key: string, value: string) {
-  if (Platform.OS === "web") {
-    localStorage.setItem(key, value);
-  } else {
-    try {
-      if (AsyncStorage && typeof AsyncStorage.setItem === "function") {
-        await AsyncStorage.setItem(key, value);
-      }
-    } catch (e) {
-      console.warn("Fallo al escribir en AsyncStorage nativo:", e);
-    }
+  try {
+    await writeStorage(key, value);
+  } catch (e) {
+    console.warn("Fallo al escribir en storage:", e);
   }
 }
 
 export async function getItem(key: string) {
-  if (Platform.OS === "web") {
-    return localStorage.getItem(key);
-  } else {
-    try {
-      if (AsyncStorage && typeof AsyncStorage.getItem === "function") {
-        return await AsyncStorage.getItem(key);
-      }
-    } catch (e) {
-      console.warn("Fallo al leer de AsyncStorage nativo:", e);
-    }
+  try {
+    return await readStorage(key);
+  } catch (e) {
+    console.warn("Fallo al leer storage:", e);
     return null;
   }
 }
-
-export const useStore = () => useContext(StoreContext);

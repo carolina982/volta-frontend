@@ -21,6 +21,14 @@ import { api } from "../services/api";
 
 type RegisterRole = "Admin" | "Operador";
 
+const notify = (title: string, message: string) => {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+};
+
 export default function Register() {
   const router = useRouter();
   const { login, addUser } = useStore();
@@ -72,17 +80,17 @@ export default function Register() {
     if (saving) return;
 
     if (!email || !nombre || !apellido || !contacto || !password || !confirmPassword || !rol) {
-      Alert.alert("Error", "Todos los campos son obligatorios");
+      notify("Error", "Todos los campos son obligatorios");
       return;
     }
 
     if (password.length < 6) {
-      Alert.alert("Error", "La contraseña debe tener al menos 6 caracteres");
+      notify("Error", "La contraseña debe tener al menos 6 caracteres");
       return;
     }
 
     if (password !== confirmPassword) {
-      Alert.alert("Error", "Las contraseñas no coinciden");
+      notify("Error", "Las contraseñas no coinciden");
       return;
     }
 
@@ -113,9 +121,8 @@ export default function Register() {
             name: `imagen.${fileType}`,
             type: `image/${fileType === "jpg" ? "jpeg" : fileType}`,
           } as any);
-          res = await api.post("/users/register", formData, {
-            headers: { "Content-Type": "multipart/form-data" },
-          });
+          // No forzar Content-Type: axios debe poner el boundary del multipart
+          res = await api.post("/users/register", formData);
         }
       } else {
         const newUser = {
@@ -153,21 +160,22 @@ export default function Register() {
         }
 
         addUser(user);
-        Alert.alert("Éxito", "Usuario registrado correctamente");
+        notify("Éxito", "Usuario registrado correctamente");
         router.replace("/Dashboard");
       } else {
-        Alert.alert("Error", "No se pudo registrar el usuario");
+        notify("Error", "No se pudo registrar el usuario");
       }
     } catch (error: any) {
       console.error("Error registrando usuario:", error.response || error);
       const data = error.response?.data;
       const message =
         data?.message ||
+        (Array.isArray(data?.errors) ? data.errors.map((e: any) => e.msg).filter(Boolean).join("\n") : null) ||
         data?.errors?.[0]?.msg ||
         (error.code === "ECONNABORTED"
           ? "El servidor tardó demasiado en responder"
           : "No se pudo registrar. Verifica la conexión.");
-      Alert.alert("Error", message);
+      notify("Error", message);
     } finally {
       setSaving(false);
     }

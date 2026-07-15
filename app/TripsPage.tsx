@@ -1,7 +1,7 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Portal, TextInput } from "react-native-paper";
 import * as XLSX from "xlsx";
@@ -47,6 +47,7 @@ interface Trip {
   multidestino?: boolean;
   destinoExtra?: DestinoExtraTrip[] | DestinoExtraTrip | null;
   destinoActualIndex?: number;
+  asignadoPor?: string | { _id: string; nombre?: string; apellido?: string } | null;
   
   kilometrajeSalida?: { numero: number; descripcion: string }[];
   kilometrajeLlegada?: { numero: number; descripcion: string }[];
@@ -61,6 +62,7 @@ interface Unit {
   placa: string;
   tipoRemolque?: string;
   placaRemolque?: string;
+  imagenUrl?: string;
 }
 interface User { id: string; nombre: string; apellido?: string; rol?: string }
 
@@ -95,17 +97,47 @@ const combineDateTime = (dateStr: string, timeStr: string): Date | null => {
   let hours = 0;
   let minutes = 0;
   if (timeStr?.trim()) {
-    const [h, m] = timeStr.split(":").map(Number);
-    hours = Number.isFinite(h) ? h : 0;
-    minutes = Number.isFinite(m) ? m : 0;
+    const parts = timeStr.split(":").map(Number);
+    hours = Number.isFinite(parts[0]) ? parts[0] : 0;
+    minutes = Number.isFinite(parts[1]) ? parts[1] : 0;
   }
-  return new Date(year, month - 1, day, hours, minutes, 0);
+  const d = new Date(year, month - 1, day, hours, minutes, 0, 0);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
 };
 
 const toInputDateValue = (dateStr: string) => {
   const d = combineDateTime(dateStr, "");
   if (!d) return "";
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+};
+
+const dismissKeyboard = () => {
+  Keyboard.dismiss();
+  if (Platform.OS === "web" && typeof document !== "undefined") {
+    const active = document.activeElement as HTMLElement | null;
+    if (active && typeof active.blur === "function") active.blur();
+  }
+};
+
+/** Alert.alert falla en web (Expo); usar window.alert ahí. */
+const notify = (title: string, message?: string) => {
+  const text = message ? `${title}\n\n${message}` : title;
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    window.alert(text);
+    return;
+  }
+  Alert.alert(title, message);
+};
+
+const formatApiError = (error: any, fallback = "No se pudo completar la operación") => {
+  const data = error?.response?.data;
+  if (!data) return error?.message || fallback;
+  if (typeof data === "string") return data;
+  if (Array.isArray(data.errors) && data.errors[0]?.msg) {
+    return data.errors.map((e: any) => e.msg).filter(Boolean).join("\n");
+  }
+  return data.message || data.error || data.msg || fallback;
 };
 
 const formatDuration = (ms: number): string => {
@@ -177,11 +209,93 @@ const formatDateTimeLabel = (value?: string | null) => {
   return date.toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
 };
 
+const formatKmLabel = (list?: { numero?: number | string }[] | null) => {
+  const raw = list?.[0]?.numero;
+  if (raw == null || raw === "") return "—";
+  const n = Number(raw);
+  if (Number.isNaN(n)) return "—";
+  return `${n.toLocaleString("es-MX")} km`;
+};
+
 const formatExcelDateTime = (value?: string | null) => {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
+};
+
+const MONTH_SHORT_ES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+/** Lunes 00:00 de la semana que contiene `ref`. */
+const getWeekStartMonday = (ref = new Date()) => {
+  const d = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
+  const weekday = d.getDay();
+  const mondayOffset = weekday === 0 ? -6 : 1 - weekday;
+  d.setDate(d.getDate() + mondayOffset);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const addDays = (date: Date, days: number) => {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+};
+
+const formatWeekRangeLabel = (weekStart: Date) => {
+  const weekEnd = addDays(weekStart, 6);
+  const sameMonth = weekStart.getMonth() === weekEnd.getMonth();
+  const sameYear = weekStart.getFullYear() === weekEnd.getFullYear();
+  const startDay = weekStart.getDate();
+  const endDay = weekEnd.getDate();
+  const startMonth = MONTH_SHORT_ES[weekStart.getMonth()];
+  const endMonth = MONTH_SHORT_ES[weekEnd.getMonth()];
+  if (sameMonth && sameYear) {
+    return `${startDay}–${endDay} ${startMonth} ${weekStart.getFullYear()}`;
+  }
+  if (sameYear) {
+    return `${startDay} ${startMonth} – ${endDay} ${endMonth} ${weekStart.getFullYear()}`;
+  }
+  return `${startDay} ${startMonth} ${weekStart.getFullYear()} – ${endDay} ${endMonth} ${weekEnd.getFullYear()}`;
+};
+
+const isTripInWeek = (trip: { fechaSalida?: string }, weekStart: Date) => {
+  if (!trip.fechaSalida) return false;
+  const date = new Date(trip.fechaSalida);
+  if (Number.isNaN(date.getTime())) return false;
+  const weekEnd = addDays(weekStart, 7);
+  return date >= weekStart && date < weekEnd;
+};
+
+const formatWeekSelectLabel = (weekStart: Date, currentWeekStart: Date) => {
+  const range = formatWeekRangeLabel(weekStart);
+  if (weekStart.getTime() === currentWeekStart.getTime()) {
+    return `Esta semana · ${range}`;
+  }
+  return `Semana ${range}`;
+};
+
+const weekStartKey = (weekStart: Date) =>
+  `${weekStart.getFullYear()}-${pad2(weekStart.getMonth() + 1)}-${pad2(weekStart.getDate())}`;
+
+const parseWeekStartKey = (key: string) => {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
+
+/** Genera opciones de semanas (pasadas y próximas) lun–dom. */
+const buildWeekOptions = (center = new Date(), past = 16, future = 4) => {
+  const current = getWeekStartMonday(center);
+  const options: { label: string; value: string; start: Date }[] = [];
+  for (let i = -past; i <= future; i++) {
+    const start = addDays(current, i * 7);
+    options.push({
+      start,
+      value: weekStartKey(start),
+      label: formatWeekSelectLabel(start, current),
+    });
+  }
+  return options;
 };
 
 /** Filtra por día / semana (lun–dom) / mes actual según fecha de salida. */
@@ -192,20 +306,19 @@ const isTripInExportPeriod = (trip: { fechaSalida?: string }, exportType: string
 
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endOfToday = new Date(startOfToday);
+  endOfToday.setDate(endOfToday.getDate() + 1);
 
   if (exportType === "dia") {
-    return date >= startOfToday;
+    return date >= startOfToday && date < endOfToday;
   }
   if (exportType === "semana") {
-    const weekday = startOfToday.getDay();
-    const mondayOffset = weekday === 0 ? -6 : 1 - weekday;
-    const startOfWeek = new Date(startOfToday);
-    startOfWeek.setDate(startOfToday.getDate() + mondayOffset);
-    return date >= startOfWeek;
+    return isTripInWeek(trip, getWeekStartMonday(now));
   }
   // mes
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  return date >= startOfMonth;
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return date >= startOfMonth && date < endOfMonth;
 };
 
 const downloadExcelFile = async (wb: XLSX.WorkBook, filename: string) => {
@@ -324,8 +437,12 @@ export default function TripsPage() {
       ? window.visualViewport?.width || window.innerWidth
       : width
   );
+  // Ancho efectivo: en web el layout puede ser más estrecho que la ventana
+  const effectiveWidth = Math.min(width, viewportWidth || width);
   // En web el preview/iframe a veces reporta ancho de desktop; compactamos por viewport real
-  const isCompactModal = isMobile || viewportWidth < 900;
+  const isCompactModal = isMobile || effectiveWidth < 900;
+  // Lista: una columna en móvil / tablet para que la tarjeta ocupe todo el ancho
+  const isNarrowList = isMobile || effectiveWidth < 1024;
   const { currentUser } = useStore();
 
   useEffect(() => {
@@ -360,7 +477,11 @@ export default function TripsPage() {
   const [kmLlegadaManual, setKmLlegadaManual] = useState("");
   const [acompanante, setAcompanante] = useState("");
   const [def, setDef] = useState("");
-  const [exportType, setExportType] = useState("dia");
+  const [exportType, setExportType] = useState("semana");
+  const [selectedWeekStart, setSelectedWeekStart] = useState(() => getWeekStartMonday());
+  const [weekSheetVisible, setWeekSheetVisible] = useState(false);
+  const [llegadaTouched, setLlegadaTouched] = useState(false);
+  const [adminShowForm, setAdminShowForm] = useState(true);
   const [showLlegadaPicker, setShowLlegadaPicker] = useState(false);
   const [showSalidaPicker, setShowSalidaPicker] = useState(false);
   const [showSalidaTimePicker, setShowSalidaTimePicker] = useState(false);
@@ -507,6 +628,7 @@ export default function TripsPage() {
         placa: u.placas ?? u.placa ?? "",
         tipoRemolque: u.tipoRemolque || "",
         placaRemolque: u.placaRemolque || "",
+        imagenUrl: u.imagenUrl || "",
       })));
     } catch (error) {
       console.error("Error cargando unidades", error);
@@ -522,7 +644,7 @@ export default function TripsPage() {
     }
   }, []);
 
- const openModal = useCallback((trip?: Trip) => {
+ const openModal = useCallback((trip?: Trip, opts?: { asRepeat?: boolean }) => {
     const applyDateTime = (iso?: string) => {
       if (!iso) return { date: "", time: "" };
       const d = new Date(iso);
@@ -530,12 +652,8 @@ export default function TripsPage() {
       return { date: formatDateDisplay(d), time: formatTimeDisplay(d) };
     };
 
-    if (trip) {
-      setEditingTrip(trip);
-      setRutaAcubrir(trip.rutaAcubrir || "");
-      setUnidadId(trip.unidadId || "");
-
-      const unitFromTrip = units.find((u) => u.id === trip.unidadId) || null;
+    const fillUnit = (unidadIdValue: string) => {
+      const unitFromTrip = units.find((u) => u.id === unidadIdValue) || null;
       setSelectedUnit(unitFromTrip);
       setUnitPlaca(unitFromTrip?.placa ?? "");
       if (unitFromTrip && isUnidadConRemolque(unitFromTrip.nombre)) {
@@ -547,7 +665,42 @@ export default function TripsPage() {
         setTipoRemolque("");
         setPlacaRemolque("");
       }
+    };
 
+    // Repetir viaje: crea uno NUEVO con los mismos datos base; el original queda en historial
+    if (trip && opts?.asRepeat) {
+      setEditingTrip(null);
+      setAdminShowForm(true);
+      setLlegadaTouched(false);
+      setRutaAcubrir(trip.rutaAcubrir || "");
+      setUnidadId(trip.unidadId || "");
+      fillUnit(trip.unidadId || "");
+      setConductorId(toId(trip.conductorId));
+      setDestino(trip.destino || "");
+      setEstado("pendiente");
+      setAcompanante(toId(trip.acompanante) || "");
+      setDef(trip.def || "");
+      setKmSalidaManual("");
+      setKmLlegadaManual("");
+      setFechaSalida("");
+      setHoraSalida("");
+      setFechaLlegada("");
+      setHoraLlegada("");
+      setMultidestino(false);
+      setDestinosExtras([]);
+      setMultiPicker(null);
+      setModalVisible(true);
+      return;
+    }
+
+    if (trip) {
+      setEditingTrip(trip);
+      // Ver detalles siempre abre la hoja; Editar muestra el formulario
+      setAdminShowForm(false);
+      setLlegadaTouched(Boolean(trip.fechaLlegada));
+      setRutaAcubrir(trip.rutaAcubrir || "");
+      setUnidadId(trip.unidadId || "");
+      fillUnit(trip.unidadId || "");
       setConductorId(toId(trip.conductorId));
 
       const salida = applyDateTime(trip.fechaSalida);
@@ -580,6 +733,8 @@ export default function TripsPage() {
       );
     } else {
       setEditingTrip(null);
+      setAdminShowForm(true);
+      setLlegadaTouched(false);
       setRutaAcubrir("");
       setUnidadId("");
       setConductorId("");
@@ -604,6 +759,249 @@ export default function TripsPage() {
     setMultiPicker(null);
     setModalVisible(true);
   }, [units]);
+
+  const buildDeliveryStops = useCallback((trip: Trip) => {
+    const currentIndex = trip.destinoActualIndex ?? 0;
+    const estadoKey = getTripEstadoKey(trip.estado);
+    const extras = normalizeDestinosExtrasList(trip.destinoExtra);
+    const stops = [
+      {
+        key: "main",
+        index: 0,
+        title: "Entrega principal",
+        destino: trip.destino || "—",
+        fechaSalida: trip.fechaSalida,
+        fechaLlegada: trip.fechaLlegada,
+        kmSalida: formatKmLabel(trip.kilometrajeSalida),
+        kmLlegada: formatKmLabel(trip.kilometrajeLlegada),
+        defEntregado: trip.def?.trim() ? trip.def.trim() : "—",
+        isCurrent: currentIndex === 0 && estadoKey !== "completado",
+        isDone:
+          Boolean(trip.fechaLlegada) ||
+          (estadoKey === "completado" && currentIndex === 0) ||
+          currentIndex > 0,
+      },
+      ...extras.map((extra, i) => {
+        const idx = i + 1;
+        return {
+          key: `extra-${i}`,
+          index: idx,
+          title: `Punto de entrega ${idx + 1}`,
+          destino: extra?.destino || "—",
+          fechaSalida: extra?.fechaSalida,
+          fechaLlegada: extra?.fechaLlegada,
+          kmSalida: formatKmLabel(extra?.kilometrajeSalida),
+          kmLlegada: formatKmLabel(extra?.kilometrajeLlegada),
+          defEntregado: null as string | null,
+          isCurrent: currentIndex === idx && estadoKey !== "completado",
+          isDone:
+            Boolean(extra?.fechaLlegada) ||
+            (estadoKey === "completado" && currentIndex >= idx) ||
+            currentIndex > idx,
+        };
+      }),
+    ];
+    return stops;
+  }, []);
+
+  const renderTripDetailSheet = (trip: Trip) => {
+    const liveTrip = trips.find((t) => t.id === trip.id) || trip;
+    const estadoStyle = getEstadoStyle(liveTrip.estado);
+    const unitDetail = units.find((u) => u.id === liveTrip.unidadId);
+    const unidadNombre = unitDetail ? formatUnitLabel(unitDetail) : liveTrip.unidadId || "—";
+    const conductorIdVal =
+      typeof liveTrip.conductorId === "object" ? liveTrip.conductorId._id : liveTrip.conductorId;
+    const conductorNombre = resolveUserName(conductorIdVal) || "—";
+    const acompananteId = toId(liveTrip.acompanante);
+    const acompananteNombre =
+      !acompananteId || acompananteId === "none"
+        ? "Sin acompañante"
+        : resolveUserName(acompananteId) || "Sin acompañante";
+    const asignadoPorNombre = resolveAsignadoPorNombre(liveTrip);
+    const stops = buildDeliveryStops(liveTrip);
+    const currentStop =
+      stops.find((s) => s.isCurrent) ||
+      stops[Math.min(liveTrip.destinoActualIndex ?? 0, stops.length - 1)];
+
+    return (
+      <View style={[styles.sheetPaper, isCompactModal && styles.sheetPaperTouch]}>
+        <View style={styles.sheetTopBar}>
+          <View style={styles.sheetBrandMark}>
+            <FontAwesome5 name="file-alt" size={14} color="#ffffff" />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.sheetDocLabel}>Hoja de viaje</Text>
+            <Text style={styles.sheetDocMeta}>
+              {liveTrip.multidestino
+                ? `Itinerario · ${stops.length} puntos de entrega`
+                : "Entrega única"}
+            </Text>
+          </View>
+          <View style={[styles.estadoBadge, estadoStyle.badge]}>
+            <FontAwesome5 name={estadoStyle.icon} size={10} color={estadoStyle.iconColor} />
+            <Text style={[styles.estadoText, estadoStyle.text]}>{liveTrip.estado}</Text>
+          </View>
+        </View>
+
+        <View style={styles.sheetHero}>
+          <Text style={styles.sheetHeroEyebrow}>Ruta</Text>
+          <Text style={styles.sheetHeroTitle}>{liveTrip.rutaAcubrir || "Sin ruta"}</Text>
+          <View style={styles.sheetHeroDivider} />
+          <Text style={styles.sheetHeroEyebrow}>Destino de entrega</Text>
+          <Text style={styles.sheetHeroDestino}>{currentStop?.destino || liveTrip.destino || "—"}</Text>
+        </View>
+
+        <View style={styles.sheetSection}>
+          <Text style={styles.sheetSectionTitle}>Itinerario de entregas</Text>
+          <View style={styles.sheetTimeline}>
+            {stops.map((stop, idx) => {
+              const isLast = idx === stops.length - 1;
+              return (
+                <View key={stop.key} style={styles.sheetTimelineItem}>
+                  <View style={styles.sheetTimelineRail}>
+                    <View
+                      style={[
+                        styles.sheetTimelineDot,
+                        stop.isDone && styles.sheetTimelineDotDone,
+                        stop.isCurrent && styles.sheetTimelineDotCurrent,
+                      ]}
+                    >
+                      {stop.isDone ? (
+                        <FontAwesome5 name="check" size={9} color="#ffffff" />
+                      ) : (
+                        <Text
+                          style={[
+                            styles.sheetTimelineDotNum,
+                            stop.isCurrent && styles.sheetTimelineDotNumCurrent,
+                          ]}
+                        >
+                          {idx + 1}
+                        </Text>
+                      )}
+                    </View>
+                    {!isLast ? (
+                      <View
+                        style={[
+                          styles.sheetTimelineLine,
+                          stop.isDone && styles.sheetTimelineLineDone,
+                        ]}
+                      />
+                    ) : null}
+                  </View>
+                  <View
+                    style={[
+                      styles.sheetStopCard,
+                      stop.isCurrent && styles.sheetStopCardCurrent,
+                      stop.isDone && styles.sheetStopCardDone,
+                    ]}
+                  >
+                    <View style={styles.sheetStopHeader}>
+                      <Text style={styles.sheetStopTitle}>{stop.title}</Text>
+                      {stop.isCurrent ? (
+                        <View style={styles.sheetNowBadge}>
+                          <Text style={styles.sheetNowBadgeText}>Actual</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={styles.sheetStopDestino}>{stop.destino}</Text>
+                    <View style={styles.sheetStopTimes}>
+                      <View style={styles.sheetStopTimeBlock}>
+                        <Text style={styles.sheetStopTimeLabel}>Salida</Text>
+                        <Text style={styles.sheetStopTimeValue}>
+                          {formatDateTimeLabel(stop.fechaSalida)}
+                        </Text>
+                      </View>
+                      <View style={styles.sheetStopTimeBlock}>
+                        <Text style={styles.sheetStopTimeLabel}>Llegada</Text>
+                        <Text style={styles.sheetStopTimeValue}>
+                          {formatDateTimeLabel(stop.fechaLlegada)}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.sheetStopTimes}>
+                      <View style={styles.sheetStopTimeBlock}>
+                        <Text style={styles.sheetStopTimeLabel}>KM Salida</Text>
+                        <Text style={styles.sheetStopTimeValue}>{stop.kmSalida}</Text>
+                      </View>
+                      <View style={styles.sheetStopTimeBlock}>
+                        <Text style={styles.sheetStopTimeLabel}>KM Llegada</Text>
+                        <Text style={styles.sheetStopTimeValue}>{stop.kmLlegada}</Text>
+                      </View>
+                    </View>
+                    {stop.defEntregado ? (
+                      <View style={styles.sheetStopDefRow}>
+                        <FontAwesome5 name="gas-pump" size={11} color="#6b7280" />
+                        <Text style={styles.sheetStopDefLabel}>DEF entregado</Text>
+                        <Text style={styles.sheetStopDefValue}>{stop.defEntregado}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={styles.sheetSection}>
+          <Text style={styles.sheetSectionTitle}>Datos del servicio</Text>
+          <View style={styles.sheetMetaGrid}>
+            <View style={styles.sheetMetaItem}>
+              <Text style={styles.sheetMetaLabel}>Operador</Text>
+              <Text style={styles.sheetMetaValue}>{conductorNombre}</Text>
+            </View>
+            <View style={styles.sheetMetaItem}>
+              <Text style={styles.sheetMetaLabel}>Acompañante</Text>
+              <Text style={styles.sheetMetaValue}>{acompananteNombre}</Text>
+            </View>
+            <View style={[styles.sheetMetaItem, styles.sheetMetaItemFull]}>
+              <Text style={styles.sheetMetaLabel}>Asignado por</Text>
+              <Text style={styles.sheetMetaValue}>{asignadoPorNombre}</Text>
+            </View>
+            <View style={[styles.sheetMetaItem, styles.sheetMetaItemFull]}>
+              <Text style={styles.sheetMetaLabel}>Unidad</Text>
+              <View style={styles.unitDetailRow}>
+                {unitDetail?.imagenUrl ? (
+                  <Image
+                    source={{ uri: unitDetail.imagenUrl }}
+                    style={styles.unitDetailPhoto}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.unitDetailPhotoPlaceholder}>
+                    <FontAwesome5 name="truck" size={18} color="#6b7280" />
+                  </View>
+                )}
+                <View style={styles.unitDetailText}>
+                  <Text style={styles.unitDetailName}>{unidadNombre}</Text>
+                  {unitDetail?.placa ? (
+                    <Text style={styles.unitDetailPlaca}>Placa {unitDetail.placa}</Text>
+                  ) : null}
+                </View>
+              </View>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  const handleFechaSalidaChange = useCallback((value: string) => {
+    setFechaSalida(value);
+  }, []);
+
+  const handleHoraSalidaChange = useCallback((value: string) => {
+    setHoraSalida(value);
+  }, []);
+
+  const handleFechaLlegadaChange = useCallback((value: string) => {
+    setLlegadaTouched(true);
+    setFechaLlegada(value);
+  }, []);
+
+  const handleHoraLlegadaChange = useCallback((value: string) => {
+    setLlegadaTouched(true);
+    setHoraLlegada(value);
+  }, []);
 
   const handleUnidadChange = (value: string) => {
     setUnidadId(value);
@@ -654,11 +1052,42 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
   const patchTripForOperador = async (trip: Trip, payload: Record<string, any>, successMessage: string) => {
     try {
       setSaving(true);
-      await api.put(`/trips/${trip.id}`, payload);
+      const res = await api.put(`/trips/${trip.id}`, payload);
       Alert.alert("Éxito", successMessage);
       await loadTrips();
       if (editingTrip?.id === trip.id) {
-        closeModal();
+        const updated = res?.data?.trip || res?.data;
+        if (updated && (updated._id || updated.id || updated.rutaAcubrir)) {
+          setEditingTrip({
+            ...trip,
+            ...updated,
+            id: updated._id || updated.id || trip.id,
+          });
+          if (payload.fechaLlegada) {
+            const llegada = applyDateTime(payload.fechaLlegada);
+            setFechaLlegada(llegada.date);
+            setHoraLlegada(llegada.time);
+            setLlegadaTouched(true);
+          }
+          if (payload.fechaSalida) {
+            const salida = applyDateTime(payload.fechaSalida);
+            setFechaSalida(salida.date);
+            setHoraSalida(salida.time);
+          }
+        } else {
+          setEditingTrip((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  ...payload,
+                  estado: payload.estado ?? prev.estado,
+                  destinoActualIndex: payload.destinoActualIndex ?? prev.destinoActualIndex,
+                  fechaSalida: payload.fechaSalida ?? prev.fechaSalida,
+                  fechaLlegada: payload.fechaLlegada ?? prev.fechaLlegada,
+                }
+              : prev
+          );
+        }
       }
     } catch (error: any) {
       console.error("Error actualizando viaje (operador):", error?.response?.data || error);
@@ -739,7 +1168,7 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
           estado: "en parada",
           destinoActualIndex: 1,
         },
-        "Parada finalizada. Puedes iniciar el siguiente destino."
+        "Parada finalizada. Llegada registrada automáticamente."
       );
       return;
     }
@@ -757,7 +1186,7 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
         multidestino: true,
         destinoExtra: buildDestinoExtraPayload(extras),
       },
-      "Parada finalizada. Puedes iniciar el siguiente destino."
+      "Parada finalizada. Llegada registrada automáticamente."
     );
   };
 
@@ -772,6 +1201,7 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
     const index = trip.destinoActualIndex ?? 0;
     const extras = normalizeDestinosExtrasList(trip.destinoExtra).map((item) => ({ ...item }));
 
+    // Destino principal (índice 0): fecha/hora de llegada = momento exacto de finalizar
     if (index <= 0) {
       await patchTripForOperador(
         trip,
@@ -780,11 +1210,12 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
           estado: "completado",
           destinoActualIndex: index,
         },
-        "Viaje finalizado"
+        "Viaje finalizado. Fecha y hora de llegada registradas automáticamente."
       );
       return;
     }
 
+    // Destino adicional actual: llegada automática al finalizar
     extras[index - 1] = {
       ...extras[index - 1],
       fechaLlegada: now,
@@ -794,43 +1225,62 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
     await patchTripForOperador(
       trip,
       {
+        // Si el destino 1 aún no tenía llegada, también la cierra ahora
         fechaLlegada: trip.fechaLlegada || now,
         estado: "completado",
         destinoActualIndex: index,
         multidestino: Boolean(trip.multidestino),
         destinoExtra: buildDestinoExtraPayload(extras),
       },
-      "Viaje finalizado"
+      "Viaje finalizado. Fecha y hora de llegada registradas automáticamente."
     );
   };
 
 const saveTrip = async () => {
   const estadoCalculado =
-    editingTrip && getTripEstadoKey(editingTrip.estado) !== "pendiente" && getTripEstadoKey(editingTrip.estado) !== "completado"
+    editingTrip &&
+    getTripEstadoKey(editingTrip.estado) !== "pendiente" &&
+    getTripEstadoKey(editingTrip.estado) !== "completado"
       ? editingTrip.estado
       : llegadaDateTime
         ? "completado"
         : editingTrip?.estado || "pendiente";
 
-  if (isAdmin && (!rutaAcubrir || !unidadId || !conductorId || !fechaSalida || !destino.trim())) {
-    Alert.alert("Falta información", "Ruta, unidad, operador, destino y fecha de salida son obligatorios.");
+  if (isAdmin && (!rutaAcubrir.trim() || !unidadId || !conductorId || !destino.trim())) {
+    notify(
+      "Falta información",
+      "Completa ruta, unidad, operador y destino antes de guardar."
+    );
+    return;
+  }
+
+  if (isAdmin && !fechaSalida.trim()) {
+    notify("Falta información", "Selecciona la fecha de salida.");
+    return;
+  }
+
+  if (isAdmin && fechaSalida.trim() && !salidaDateTime) {
+    notify(
+      "Fecha inválida",
+      "La fecha de salida no es válida. Vuelve a seleccionarla (y la hora)."
+    );
     return;
   }
 
   if (salidaDateTime && llegadaDateTime && llegadaDateTime < salidaDateTime) {
-    Alert.alert("Fechas inválidas", "La fecha y hora de llegada no puede ser anterior a la salida.");
+    notify("Fechas inválidas", "La llegada no puede ser anterior a la salida.");
     return;
   }
 
   if (multidestino) {
     if (destinosExtras.length === 0) {
-      Alert.alert("Multidestino incompleto", "Agrega al menos un destino adicional.");
+      notify("Multidestino incompleto", "Agrega al menos un destino adicional.");
       return;
     }
     for (let i = 0; i < destinosExtras.length; i++) {
       const extra = destinosExtras[i];
       if (!extra.destino.trim() || !extra.unidadId || !extra.conductorId || !extra.fechaSalida) {
-        Alert.alert(
+        notify(
           "Multidestino incompleto",
           `Completa destino, unidad, operador y fecha de salida del destino adicional #${i + 1}.`
         );
@@ -839,7 +1289,7 @@ const saveTrip = async () => {
       const s = combineDateTime(extra.fechaSalida, extra.horaSalida);
       const l = combineDateTime(extra.fechaLlegada, extra.horaLlegada);
       if (s && l && l < s) {
-        Alert.alert(
+        notify(
           "Fechas inválidas",
           `En el destino adicional #${i + 1}, la llegada no puede ser anterior a la salida.`
         );
@@ -849,12 +1299,12 @@ const saveTrip = async () => {
   }
 
   const payload: any = {
-    rutaAcubrir,
+    rutaAcubrir: rutaAcubrir.trim(),
     unidadId,
     conductorId: typeof conductorId === "object" ? (conductorId as any)._id : conductorId,
     destino: destino.trim(),
     estado: estadoCalculado,
-    acompanante: (acompanante === "none" || acompanante === "") ? null : acompanante,
+    acompanante: acompanante === "none" || acompanante === "" ? null : acompanante,
     def: def || "",
     kilometrajeSalida: kmSalidaManual.trim()
       ? [{ numero: Number(kmSalidaManual), descripcion: "" }]
@@ -866,15 +1316,26 @@ const saveTrip = async () => {
   };
 
   if (!payload.acompanante) delete payload.acompanante;
-  if (!payload.def) payload.def = "";
 
-  if (salidaDateTime) payload.fechaSalida = salidaDateTime.toISOString();
-  if (llegadaDateTime) {
-    payload.fechaLlegada = llegadaDateTime.toISOString();
-  } else {
-    delete payload.fechaLlegada;
+  // Backend exige fechaSalida en ISO8601 al crear
+  if (salidaDateTime) {
+    payload.fechaSalida = salidaDateTime.toISOString();
+  } else if (!editingTrip) {
+    notify("Falta información", "Selecciona fecha y hora de salida.");
+    return;
   }
 
+  // Llegada NO es obligatoria al crear: queda null hasta que el operador finalice
+  // (o hasta que un admin la capture manualmente).
+  if (llegadaDateTime) {
+    payload.fechaLlegada = llegadaDateTime.toISOString();
+  } else if (!editingTrip) {
+    payload.fechaLlegada = null;
+  } else if (llegadaTouched) {
+    // Admin limpió la llegada a propósito
+    payload.fechaLlegada = null;
+  }
+  // Si edita sin tocar llegada vacía, no enviamos el campo y el backend conserva el valor
   if (multidestino) {
     payload.destinoExtra = destinosExtras.map((extra) => {
       const s = combineDateTime(extra.fechaSalida, extra.horaSalida);
@@ -899,6 +1360,11 @@ const saveTrip = async () => {
     payload.destinoExtra = [];
   }
 
+  if (mostrarRemolque && tipoRemolque) {
+    payload.tipoRemolque = tipoRemolque;
+    if (placaRemolque.trim()) payload.placaRemolque = placaRemolque.trim();
+  }
+
   try {
     setSaving(true);
     if (editingTrip) {
@@ -906,13 +1372,12 @@ const saveTrip = async () => {
     } else {
       await api.post("/trips", payload);
     }
-    
-    Alert.alert("Éxito", "Viaje guardado correctamente");
+    notify("Éxito", "Viaje guardado correctamente");
     await loadTrips();
     closeModal();
   } catch (error: any) {
-    console.error("Error al guardar:", error.response?.data);
-    Alert.alert("Error", "Revisa la consola para el detalle del error.");
+    console.error("Error al guardar:", error?.response?.data || error);
+    notify("Error al guardar", formatApiError(error, "No se pudo guardar el viaje. Revisa los datos."));
   } finally {
     setSaving(false);
   }
@@ -955,6 +1420,20 @@ const deleteTrip = async (id: string) => {
       return [user.nombre, user.apellido].filter(Boolean).join(" ").trim();
     },
     [users]
+  );
+
+  const resolveAsignadoPorNombre = useCallback(
+    (trip: Trip) => {
+      const raw = trip.asignadoPor;
+      if (!raw) return "—";
+      if (typeof raw === "object") {
+        const fromPopulate = [raw.nombre, raw.apellido].filter(Boolean).join(" ").trim();
+        if (fromPopulate) return fromPopulate;
+        return resolveUserName(raw._id) || "—";
+      }
+      return resolveUserName(raw) || "—";
+    },
+    [resolveUserName]
   );
 
   const exportToExcel = async () => {
@@ -1029,9 +1508,10 @@ const deleteTrip = async (id: string) => {
   };
 
   const renderOperadorActions = (trip: Trip, compact = false) => {
-    const estado = getTripEstadoKey(trip.estado);
+    const liveTrip = trips.find((t) => t.id === trip.id) || trip;
+    const estado = getTripEstadoKey(liveTrip.estado);
     const canIniciar = estado === "pendiente" || estado === "en parada";
-    const canParada = estado === "en progreso" && getTotalDestinosCount(trip) > (trip.destinoActualIndex ?? 0) + 1;
+    const canParada = estado === "en progreso" && getTotalDestinosCount(liveTrip) > (liveTrip.destinoActualIndex ?? 0) + 1;
     const canFinalizar = estado === "en progreso" || estado === "en parada";
 
     if (estado === "completado") {
@@ -1047,52 +1527,40 @@ const deleteTrip = async (id: string) => {
       <View
         style={[
           styles.operadorActionsRow,
+          styles.operadorActionsRowSticky,
           compact && styles.operadorActionsRowCompact,
-          isMobile && styles.operadorActionsRowMobile,
         ]}
       >
         {canIniciar && (
           <TouchableOpacity
-            style={[
-              styles.operadorActionBtn,
-              styles.operadorActionPrimary,
-              isMobile && styles.operadorActionBtnMobile,
-            ]}
-            onPress={() => iniciarViaje(trip)}
+            style={[styles.operadorActionBtn, styles.operadorActionPrimary, styles.operadorActionBtnFixed]}
+            onPress={() => iniciarViaje(liveTrip)}
             disabled={saving}
             activeOpacity={0.85}
           >
-            <FontAwesome5 name="play" size={12} color="#ffffff" />
+            <FontAwesome5 name="play" size={13} color="#ffffff" />
             <Text style={styles.operadorActionTextPrimary}>Iniciar viaje</Text>
           </TouchableOpacity>
         )}
         {canParada && (
           <TouchableOpacity
-            style={[
-              styles.operadorActionBtn,
-              styles.operadorActionSecondary,
-              isMobile && styles.operadorActionBtnMobile,
-            ]}
-            onPress={() => finalizarParada(trip)}
+            style={[styles.operadorActionBtn, styles.operadorActionSecondary, styles.operadorActionBtnFixed]}
+            onPress={() => finalizarParada(liveTrip)}
             disabled={saving}
             activeOpacity={0.85}
           >
-            <FontAwesome5 name="map-marker-alt" size={12} color="#111111" />
+            <FontAwesome5 name="map-marker-alt" size={13} color="#111111" />
             <Text style={styles.operadorActionText}>Finalizar parada</Text>
           </TouchableOpacity>
         )}
         {canFinalizar && (
           <TouchableOpacity
-            style={[
-              styles.operadorActionBtn,
-              styles.operadorActionDanger,
-              isMobile && styles.operadorActionBtnMobile,
-            ]}
-            onPress={() => finalizarViaje(trip)}
+            style={[styles.operadorActionBtn, styles.operadorActionDanger, styles.operadorActionBtnFixed]}
+            onPress={() => finalizarViaje(liveTrip)}
             disabled={saving}
             activeOpacity={0.85}
           >
-            <FontAwesome5 name="flag-checkered" size={12} color="#dc2626" />
+            <FontAwesome5 name="flag-checkered" size={13} color="#dc2626" />
             <Text style={styles.operadorActionTextDanger}>Finalizar viaje</Text>
           </TouchableOpacity>
         )}
@@ -1102,9 +1570,9 @@ const deleteTrip = async (id: string) => {
 
   const renderItem = ({ item }: { item: Trip }) => {
     const leg = getOperadorLegInfo(item);
+    const unitObj = units.find((u) => u.id === (isOperador ? leg.unidadId : item.unidadId));
     const unidadNombre =
-      units.find((u) => u.id === (isOperador ? leg.unidadId : item.unidadId))?.nombre ||
-      (isOperador ? leg.unidadId : item.unidadId);
+      unitObj?.nombre || (isOperador ? leg.unidadId : item.unidadId);
     const conductorIdVal = typeof item.conductorId === "object" ? item.conductorId._id : item.conductorId;
     const conductorNombre = resolveUserName(conductorIdVal) || "N/A";
     const acompananteId = toId(isOperador ? leg.acompanante : item.acompanante);
@@ -1112,25 +1580,116 @@ const deleteTrip = async (id: string) => {
       !acompananteId || acompananteId === "none"
         ? "Sin acompañante"
         : resolveUserName(acompananteId) || "Sin acompañante";
+    const asignadoPorNombre = resolveAsignadoPorNombre(item);
     const canEdit = isAdmin || String(currentUser._id) === String(conductorIdVal);
     const canDelete = isAdmin;
     const estado = getEstadoStyle(item.estado);
+    const destinoLabel = leg.destino || item.destino || "—";
+    const rutaLabel = item.rutaAcubrir || leg.destino || "Sin ruta";
+
+    // Móvil: card compacta — solo ruta, destino, ver detalles y eliminar
+    if (isMobile || isNarrowList) {
+      return (
+        <View style={styles.cardSlot}>
+          <View style={[styles.card, styles.cardFullWidth, styles.cardMobileCompact]}>
+            <View style={styles.cardBody}>
+              <View style={styles.cardHeader}>
+                <Text style={[styles.cardTitle, styles.cardTitleMobileCompact]} numberOfLines={2}>
+                  {rutaLabel}
+                </Text>
+                <View style={[styles.estadoBadge, estado.badge]}>
+                  <FontAwesome5 name={estado.icon} size={10} color={estado.iconColor} />
+                  <Text style={[styles.estadoText, estado.text]}>{item.estado}</Text>
+                </View>
+              </View>
+
+              <View style={styles.mobileDestinoBlock}>
+                <Text style={styles.specLabel}>Destino</Text>
+                <Text style={styles.mobileDestinoValue} numberOfLines={2}>
+                  {destinoLabel}
+                </Text>
+              </View>
+
+              <View style={styles.mobileDestinoBlock}>
+                <Text style={styles.specLabel}>Asignado por</Text>
+                <Text style={styles.mobileDestinoValue} numberOfLines={1}>
+                  {asignadoPorNombre}
+                </Text>
+              </View>
+
+              {item.multidestino && normalizeDestinosExtrasList(item.destinoExtra).length > 0 ? (
+                <View style={styles.mobileStopsChips}>
+                  <View style={styles.mobileStopChipMain}>
+                    <Text style={styles.mobileStopChipIndexLight}>1</Text>
+                    <Text style={styles.mobileStopChipTextLight} numberOfLines={1}>
+                      {item.destino || "Entrega"}
+                    </Text>
+                  </View>
+                  {normalizeDestinosExtrasList(item.destinoExtra).map((extra, i) => (
+                    <View key={`chip-${item.id}-${i}`} style={styles.mobileStopChip}>
+                      <Text style={styles.mobileStopChipIndex}>{i + 2}</Text>
+                      <Text style={styles.mobileStopChipText} numberOfLines={1}>
+                        {extra?.destino || `Punto ${i + 2}`}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
+              <View style={styles.mobileCardActions}>
+                {canEdit ? (
+                  <TouchableOpacity
+                    style={styles.mobileDetailsBtn}
+                    onPress={() => openModal(item)}
+                    activeOpacity={0.85}
+                  >
+                    <FontAwesome5 name="eye" size={13} color="#ffffff" />
+                    <Text style={styles.mobileDetailsBtnText}>Ver detalles</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {canEdit && getTripEstadoKey(item.estado) === "completado" ? (
+                  <TouchableOpacity
+                    style={styles.mobileRepeatBtn}
+                    onPress={() => openModal(item, { asRepeat: true })}
+                    activeOpacity={0.85}
+                  >
+                    <FontAwesome5 name="redo" size={13} color="#111111" />
+                    <Text style={styles.mobileRepeatBtnText}>Repetir</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {canDelete ? (
+                  <TouchableOpacity
+                    style={styles.mobileDeleteBtn}
+                    onPress={() => deleteTrip(item.id)}
+                    activeOpacity={0.85}
+                  >
+                    <FontAwesome5 name="trash-alt" size={13} color="#dc2626" />
+                    <Text style={styles.mobileDeleteBtnText}>Eliminar</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
+          </View>
+        </View>
+      );
+    }
 
     return (
-      <View
-        style={[
-          styles.card,
-          isMobile ? styles.cardMobile : styles.cardDesktop,
-          isOperador && isMobile && styles.cardOperadorMobile,
-        ]}
-      >
-        <View style={styles.cardIconWrap}>
-          <FontAwesome5 name="route" size={20} color="#111111" />
-        </View>
+      <View style={styles.cardSlot}>
+        <View
+          style={[
+            styles.card,
+            styles.cardFullWidth,
+            isOperador && styles.cardOperadorMobile,
+          ]}
+        >
+          <View style={styles.cardIconWrap}>
+            <FontAwesome5 name="route" size={20} color="#111111" />
+          </View>
 
         <View style={styles.cardBody}>
           <View style={styles.cardHeader}>
-            <Text style={[styles.cardTitle, isOperador && isMobile && styles.cardTitleOperador]} numberOfLines={2}>
+            <Text style={[styles.cardTitle, isOperador && styles.cardTitleOperador]} numberOfLines={2}>
               {isOperador ? leg.destino : item.rutaAcubrir}
             </Text>
             <View style={[styles.estadoBadge, estado.badge]}>
@@ -1146,8 +1705,8 @@ const deleteTrip = async (id: string) => {
             </View>
           ) : null}
 
-          <View style={[styles.specGrid, isOperador && isMobile && styles.specGridOperador]}>
-            <View style={[styles.specItem, isOperador && isMobile && styles.specItemOperador]}>
+          <View style={styles.specGrid}>
+            <View style={styles.specItem}>
               <Text style={styles.specLabel}>Unidad</Text>
               <Text style={styles.specValue}>{unidadNombre || "—"}</Text>
             </View>
@@ -1157,12 +1716,12 @@ const deleteTrip = async (id: string) => {
                 <Text style={styles.specValue} numberOfLines={1}>{conductorNombre}</Text>
               </View>
             )}
-            <View style={[styles.specItem, isOperador && isMobile && styles.specItemOperador]}>
+            <View style={[styles.specItem, styles.specItemFull]}>
               <Text style={styles.specLabel}>Destino</Text>
-              <Text style={styles.specValue} numberOfLines={2}>{leg.destino || item.destino || "—"}</Text>
+              <Text style={styles.specValue} numberOfLines={2}>{destinoLabel}</Text>
             </View>
             {!isOperador && item.multidestino && normalizeDestinosExtrasList(item.destinoExtra).length > 0 ? (
-              <View style={styles.specItem}>
+              <View style={[styles.specItem, styles.specItemFull]}>
                 <Text style={styles.specLabel}>Extras</Text>
                 <Text style={styles.specValue} numberOfLines={2}>
                   {normalizeDestinosExtrasList(item.destinoExtra)
@@ -1171,31 +1730,34 @@ const deleteTrip = async (id: string) => {
                 </Text>
               </View>
             ) : null}
-            <View style={[styles.specItem, isOperador && isMobile && styles.specItemOperador]}>
+            <View style={styles.specItem}>
               <Text style={styles.specLabel}>Salida</Text>
               <Text style={styles.specValue}>{formatDateTimeLabel(leg.fechaSalida || item.fechaSalida)}</Text>
             </View>
-            <View style={[styles.specItem, isOperador && isMobile && styles.specItemOperador]}>
+            <View style={styles.specItem}>
               <Text style={styles.specLabel}>Llegada</Text>
               <Text style={styles.specValue}>{formatDateTimeLabel(leg.fechaLlegada || item.fechaLlegada)}</Text>
             </View>
-            <View style={[styles.specItem, isOperador && isMobile && styles.specItemOperador]}>
+            <View style={[styles.specItem, styles.specItemFull]}>
               <Text style={styles.specLabel}>Acompañante</Text>
               <Text style={styles.specValue} numberOfLines={1}>{acompananteNombre}</Text>
+            </View>
+            <View style={[styles.specItem, styles.specItemFull]}>
+              <Text style={styles.specLabel}>Asignado por</Text>
+              <Text style={styles.specValue} numberOfLines={1}>{asignadoPorNombre}</Text>
             </View>
           </View>
 
           {isOperador ? (
-            <View style={[styles.operadorCardFooter, isMobile && styles.operadorCardFooterMobile]}>
+            <View style={styles.operadorCardFooter}>
               {renderOperadorActions(item, true)}
               {canEdit && getTripEstadoKey(item.estado) !== "completado" && (
                 <TouchableOpacity
-                  style={[styles.iconAction, isMobile && styles.iconActionOperador]}
+                  style={styles.iconAction}
                   onPress={() => openModal(item)}
                   activeOpacity={0.85}
                 >
                   <FontAwesome5 name="eye" size={14} color="#111111" />
-                  {isMobile ? <Text style={styles.iconActionLabel}>Ver detalle</Text> : null}
                 </TouchableOpacity>
               )}
             </View>
@@ -1204,6 +1766,16 @@ const deleteTrip = async (id: string) => {
               {canEdit && (
                 <TouchableOpacity style={styles.iconAction} onPress={() => openModal(item)} activeOpacity={0.85}>
                   <FontAwesome5 name="pen" size={13} color="#111111" />
+                </TouchableOpacity>
+              )}
+              {canEdit && getTripEstadoKey(item.estado) === "completado" && (
+                <TouchableOpacity
+                  style={styles.iconAction}
+                  onPress={() => openModal(item, { asRepeat: true })}
+                  activeOpacity={0.85}
+                  accessibilityLabel="Repetir viaje"
+                >
+                  <FontAwesome5 name="redo" size={13} color="#111111" />
                 </TouchableOpacity>
               )}
               {canDelete && (
@@ -1215,6 +1787,127 @@ const deleteTrip = async (id: string) => {
           )}
         </View>
       </View>
+      </View>
+    );
+  };
+
+  const displayedTrips = useMemo(
+    () => trips.filter((t) => isTripInWeek(t, selectedWeekStart)),
+    [trips, selectedWeekStart]
+  );
+
+  const weekOptions = useMemo(() => buildWeekOptions(), []);
+  const weekLabel = useMemo(() => formatWeekRangeLabel(selectedWeekStart), [selectedWeekStart]);
+  const weekSelectLabel = useMemo(() => {
+    const current = getWeekStartMonday();
+    return formatWeekSelectLabel(selectedWeekStart, current);
+  }, [selectedWeekStart]);
+  const selectedWeekValue = weekStartKey(selectedWeekStart);
+
+  const openWeekSheet = () => setWeekSheetVisible(true);
+  const closeWeekSheet = () => setWeekSheetVisible(false);
+
+  const renderWeekSelectSheet = () => {
+    if (!weekSheetVisible) return null;
+    const currentMonday = getWeekStartMonday();
+    // Web ancho: modal centrado. Móvil / vista estrecha: bottom sheet.
+    const useBottomSheet = isNarrowList || Platform.OS !== "web";
+
+    const sheetBody = (
+      <View
+        style={[styles.weekSheetOverlay, !useBottomSheet && styles.weekSheetOverlayDesktop]}
+        pointerEvents="box-none"
+      >
+        <Pressable style={styles.weekSheetBackdrop} onPress={closeWeekSheet} />
+        <View
+          style={[
+            styles.weekSheetCard,
+            useBottomSheet ? styles.weekSheetCardMobile : styles.weekSheetCardDesktop,
+          ]}
+          {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+        >
+          {useBottomSheet ? <View style={styles.weekSheetHandle} /> : null}
+
+          <View style={[styles.weekSheetHeader, !useBottomSheet && styles.weekSheetHeaderDesktop]}>
+            <View style={styles.weekSheetHeaderText}>
+              <View style={styles.weekSheetIconBadge}>
+                <FontAwesome5 name="calendar-week" size={14} color="#ffffff" />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.weekSheetTitle}>Seleccionar semana</Text>
+                <Text style={styles.weekSheetSubtitle}>Periodo de lunes a domingo</Text>
+              </View>
+            </View>
+            <Pressable
+              style={({ pressed }) => [styles.weekSheetClose, pressed && styles.weekSheetClosePressed]}
+              onPress={closeWeekSheet}
+              accessibilityLabel="Cerrar"
+            >
+              <FontAwesome5 name="times" size={13} color="#6b7280" />
+            </Pressable>
+          </View>
+
+          <ScrollView
+            style={[styles.weekSheetList, !useBottomSheet && styles.weekSheetListDesktop]}
+            contentContainerStyle={styles.weekSheetListContent}
+            keyboardShouldPersistTaps="always"
+            nestedScrollEnabled
+            showsVerticalScrollIndicator={false}
+          >
+            {weekOptions.map((opt) => {
+              const active = opt.value === selectedWeekValue;
+              const isCurrent = opt.start.getTime() === currentMonday.getTime();
+              const range = formatWeekRangeLabel(opt.start);
+              return (
+                <Pressable
+                  key={opt.value}
+                  style={({ pressed, hovered }: any) => [
+                    styles.weekOptionRow,
+                    (hovered || pressed) && styles.weekOptionRowHover,
+                    active && styles.weekOptionRowActive,
+                  ]}
+                  onPress={() => {
+                    setSelectedWeekStart(opt.start);
+                    closeWeekSheet();
+                  }}
+                >
+                  <View style={[styles.weekOptionDot, active && styles.weekOptionDotActive]} />
+                  <View style={styles.weekOptionTextWrap}>
+                    <Text style={[styles.weekOptionTitle, active && styles.weekOptionTitleActive]}>
+                      {range}
+                    </Text>
+                    <View style={styles.weekOptionMetaRow}>
+                      <Text style={styles.weekOptionSub}>Lun – Dom</Text>
+                      {isCurrent ? (
+                        <View style={styles.weekOptionBadge}>
+                          <Text style={styles.weekOptionBadgeText}>Actual</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
+                  {active ? (
+                    <View style={styles.weekOptionCheck}>
+                      <FontAwesome5 name="check" size={11} color="#ffffff" />
+                    </View>
+                  ) : (
+                    <FontAwesome5 name="chevron-right" size={11} color="#d1d5db" />
+                  )}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+    );
+
+    if (Platform.OS === "web") {
+      return <Portal>{sheetBody}</Portal>;
+    }
+
+    return (
+      <Modal visible transparent animationType="fade" onRequestClose={closeWeekSheet}>
+        {sheetBody}
+      </Modal>
     );
   };
 
@@ -1226,6 +1919,9 @@ const deleteTrip = async (id: string) => {
     contentStyle: [styles.modalInputContent, isCompactModal && styles.modalInputContentTouch],
     style: [styles.modalInput, isCompactModal && styles.modalInputTouch],
     placeholderTextColor: "#9ca3af",
+    blurOnSubmit: true,
+    returnKeyType: "done" as const,
+    onSubmitEditing: () => dismissKeyboard(),
   };
 
   const renderFormSection = (title: string, children: React.ReactNode) => (
@@ -1276,7 +1972,11 @@ const deleteTrip = async (id: string) => {
     onChange: (value: string) => void,
     placeholder = "Seleccionar"
   ) => {
-    setSelectSheet({ title, value, options, onChange, placeholder });
+    dismissKeyboard();
+    // Esperar a que el teclado baje antes de montar la hoja (móvil web/nativo)
+    setTimeout(() => {
+      setSelectSheet({ title, value, options, onChange, placeholder });
+    }, Platform.OS === "web" ? 50 : 120);
   };
 
   const closeSelectSheet = () => setSelectSheet(null);
@@ -1321,7 +2021,9 @@ const deleteTrip = async (id: string) => {
             isCompactModal && styles.selectTriggerTouch,
             pressed && styles.selectTriggerPressed,
           ]}
-          onPress={() => openSelectSheet(label, value, options, onChange, placeholder)}
+          onPress={() => {
+            openSelectSheet(label, value, options, onChange, placeholder);
+          }}
         >
           <Text
             style={[
@@ -1359,7 +2061,7 @@ const deleteTrip = async (id: string) => {
           <ScrollView
             style={styles.selectSheetList}
             contentContainerStyle={styles.selectSheetListContent}
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
             nestedScrollEnabled
           >
             {items.map((item, index) => {
@@ -1406,102 +2108,195 @@ const deleteTrip = async (id: string) => {
     setShowDatePicker: (v: boolean) => void,
     showTimePicker: boolean,
     setShowTimePicker: (v: boolean) => void
-  ) =>
-    renderModalField(
-      label,
-      <View
-        style={[styles.dateTimeRow, isCompactModal && styles.dateTimeRowStack]}
-        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
-      >
-        {Platform.OS === "web" ? (
-          <>
-            <input
-              type="date"
-              value={toInputDateValue(dateValue)}
-              onChange={(e) => {
-                if (!e.target.value) {
-                  onDateChange("");
-                  return;
-                }
-                const [year, month, day] = e.target.value.split("-");
-                onDateChange(`${day}/${month}/${year}`);
-              }}
-              onClick={(e) => e.stopPropagation()}
-              style={webControlStyle(
-                isCompactModal
-                  ? { minHeight: 48, fontSize: 16 }
-                  : { flex: 1.2, minWidth: 0 }
-              )}
-            />
-            <input
-              type="time"
-              value={timeValue || ""}
-              onChange={(e) => onTimeChange(e.target.value)}
-              onClick={(e) => e.stopPropagation()}
-              style={webControlStyle(
-                isCompactModal
-                  ? { minHeight: 48, fontSize: 16 }
-                  : { flex: 0.8, minWidth: 0 }
-              )}
-            />
-          </>
-        ) : (
-          <>
-            <Pressable
-              style={[styles.dateTimeInput, isCompactModal && styles.dateTimeInputTouch]}
-              onPress={() => setShowDatePicker(true)}
+  ) => {
+    const touchLike = isCompactModal || isNarrowList || isMobile;
+
+    const openNativePicker = (el: HTMLInputElement | null) => {
+      if (!el) return;
+      try {
+        // Chrome / Safari moderno
+        (el as any).showPicker?.();
+      } catch {
+        el.focus();
+        el.click();
+      }
+    };
+
+    // Web: siempre UI custom (botón a 100%). El input nativo va transparente
+    // encima; así la hora no se corta como con <input type="time"> visible.
+    if (Platform.OS === "web") {
+      return renderModalField(
+        label,
+        <View
+          style={styles.dateTimeStackWeb}
+          {...{
+            onClick: (e: any) => e.stopPropagation(),
+            onMouseDown: (e: any) => e.stopPropagation(),
+          }}
+        >
+          <View style={styles.webDateTimeFieldStacked}>
+            <Text style={styles.webDateTimeHint}>Fecha</Text>
+            <View
+              style={[
+                styles.dateTimeHitBox,
+                touchLike && styles.dateTimeHitBoxTouch,
+              ]}
             >
-              <FontAwesome5 name="calendar-alt" size={14} color="#6b7280" />
-              <Text style={[styles.dateTimeText, !dateValue && styles.selectTriggerPlaceholder]}>
+              <FontAwesome5 name="calendar-alt" size={15} color="#6b7280" />
+              <Text
+                style={[
+                  styles.dateTimeHitText,
+                  !dateValue && styles.selectTriggerPlaceholder,
+                ]}
+                numberOfLines={1}
+              >
                 {dateValue || "Seleccionar fecha"}
               </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.dateTimeInput, isCompactModal && styles.dateTimeInputTouch]}
-              onPress={() => setShowTimePicker(true)}
+              <input
+                type="date"
+                value={toInputDateValue(dateValue)}
+                onChange={(e) => {
+                  if (!e.target.value) {
+                    onDateChange("");
+                    return;
+                  }
+                  const [year, month, day] = e.target.value.split("-");
+                  onDateChange(`${day}/${month}/${year}`);
+                }}
+                onFocus={() => dismissKeyboard()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  dismissKeyboard();
+                  openNativePicker(e.currentTarget);
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                style={styles.webNativePickerOverlay as any}
+                aria-label={`${label} fecha`}
+              />
+            </View>
+          </View>
+
+          <View style={styles.webDateTimeFieldStacked}>
+            <Text style={styles.webDateTimeHint}>Hora</Text>
+            <View
+              style={[
+                styles.dateTimeHitBox,
+                touchLike && styles.dateTimeHitBoxTouch,
+              ]}
             >
-              <FontAwesome5 name="clock" size={14} color="#6b7280" />
-              <Text style={[styles.dateTimeText, !timeValue && styles.selectTriggerPlaceholder]}>
+              <FontAwesome5 name="clock" size={15} color="#6b7280" />
+              <Text
+                style={[
+                  styles.dateTimeHitText,
+                  !timeValue && styles.selectTriggerPlaceholder,
+                ]}
+                numberOfLines={1}
+              >
                 {timeValue || "Seleccionar hora"}
               </Text>
-            </Pressable>
-            {showDatePicker && (
-              <DateTimePicker
-                value={parseDate(dateValue) || new Date()}
-                mode="date"
-                display={Platform.OS === "ios" ? "spinner" : "default"}
-                onChange={(_event, date) => {
-                  setShowDatePicker(Platform.OS === "ios");
-                  if (date) onDateChange(formatDateDisplay(date));
+              <input
+                type="time"
+                value={timeValue || ""}
+                onChange={(e) => {
+                  const raw = e.target.value || "";
+                  onTimeChange(raw.slice(0, 5));
                 }}
+                onFocus={() => dismissKeyboard()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  dismissKeyboard();
+                  openNativePicker(e.currentTarget);
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                style={styles.webNativePickerOverlay as any}
+                aria-label={`${label} hora`}
               />
-            )}
-            {showTimePicker && (
-              <DateTimePicker
-                value={combineDateTime(dateValue, timeValue) || new Date()}
-                mode="time"
-                display={Platform.OS === "ios" ? "spinner" : "default"}
-                onChange={(_event, date) => {
-                  setShowTimePicker(Platform.OS === "ios");
-                  if (date) onTimeChange(formatTimeDisplay(date));
-                }}
-              />
-            )}
-            {Platform.OS === "ios" && (showDatePicker || showTimePicker) && (
-              <Pressable
-                style={styles.iosPickerDone}
-                onPress={() => {
-                  setShowDatePicker(false);
-                  setShowTimePicker(false);
-                }}
-              >
-                <Text style={styles.iosPickerDoneText}>Listo</Text>
-              </Pressable>
-            )}
-          </>
+            </View>
+          </View>
+        </View>
+      );
+    }
+
+    return renderModalField(
+      label,
+      <View style={styles.dateTimeStackWeb}>
+        <Pressable
+          style={[styles.dateTimeHitBox, touchLike && styles.dateTimeHitBoxTouch]}
+          onPress={() => {
+            dismissKeyboard();
+            setShowTimePicker(false);
+            setTimeout(() => setShowDatePicker(true), 80);
+          }}
+        >
+          <FontAwesome5 name="calendar-alt" size={15} color="#6b7280" />
+          <Text
+            style={[styles.dateTimeHitText, !dateValue && styles.selectTriggerPlaceholder]}
+            numberOfLines={1}
+          >
+            {dateValue || "Seleccionar fecha"}
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.dateTimeHitBox, touchLike && styles.dateTimeHitBoxTouch]}
+          onPress={() => {
+            dismissKeyboard();
+            setShowDatePicker(false);
+            setTimeout(() => setShowTimePicker(true), 80);
+          }}
+        >
+          <FontAwesome5 name="clock" size={15} color="#6b7280" />
+          <Text
+            style={[styles.dateTimeHitText, !timeValue && styles.selectTriggerPlaceholder]}
+            numberOfLines={1}
+          >
+            {timeValue || "Seleccionar hora"}
+          </Text>
+        </Pressable>
+        {showDatePicker && (
+          <DateTimePicker
+            value={parseDate(dateValue) || new Date()}
+            mode="date"
+            display={Platform.OS === "ios" ? "spinner" : "default"}
+            onChange={(event: any, date) => {
+              if (Platform.OS === "android") {
+                setShowDatePicker(false);
+                if (event?.type === "dismissed") return;
+              }
+              if (date) onDateChange(formatDateDisplay(date));
+            }}
+          />
+        )}
+        {showTimePicker && (
+          <DateTimePicker
+            value={
+              combineDateTime(dateValue || formatDateDisplay(new Date()), timeValue) || new Date()
+            }
+            mode="time"
+            display={Platform.OS === "ios" ? "spinner" : "default"}
+            is24Hour
+            onChange={(event: any, date) => {
+              if (Platform.OS === "android") {
+                setShowTimePicker(false);
+                if (event?.type === "dismissed") return;
+              }
+              if (date) onTimeChange(formatTimeDisplay(date));
+            }}
+          />
+        )}
+        {Platform.OS === "ios" && (showDatePicker || showTimePicker) && (
+          <Pressable
+            style={styles.iosPickerDone}
+            onPress={() => {
+              setShowDatePicker(false);
+              setShowTimePicker(false);
+            }}
+          >
+            <Text style={styles.iosPickerDoneText}>Listo</Text>
+          </Pressable>
         )}
       </View>
     );
+  };
 
   const renderTravelTimeCard = (tiempo = tiempoTrayecto) => (
     <View style={[styles.travelTimeCard, isCompactModal && styles.travelTimeCardTouch, tiempo.live && styles.travelTimeCardLive]}>
@@ -1554,10 +2349,102 @@ const deleteTrip = async (id: string) => {
     );
 
   function renderModalContent() {
+    const isHojaOnly =
+      Boolean(editingTrip) && (!isAdmin || !adminShowForm);
+
+    if (isHojaOnly && editingTrip) {
+      const hojaBody = (
+        <View
+          style={[styles.modalCard, isCompactModal && styles.modalCardTouch, styles.hojaModalCard]}
+          {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+        >
+          <View style={styles.hojaModalTop}>
+            <TouchableOpacity
+              style={[styles.modalCloseButton, isCompactModal && styles.modalCloseButtonTouch]}
+              onPress={closeModal}
+              disabled={saving}
+              activeOpacity={0.85}
+            >
+              <FontAwesome5 name="times" size={isCompactModal ? 16 : 14} color="#6b7280" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={isCompactModal ? styles.modalBodyWrapTouch : styles.modalBodyWrap}>
+            <ScrollView
+              style={styles.modalScroll}
+              contentContainerStyle={[
+                styles.modalScrollContent,
+                isCompactModal && styles.modalScrollContentTouch,
+                styles.hojaScrollContent,
+              ]}
+              showsVerticalScrollIndicator
+              keyboardShouldPersistTaps="always"
+              nestedScrollEnabled
+              bounces
+            >
+              {renderTripDetailSheet(editingTrip)}
+            </ScrollView>
+          </View>
+
+          <View style={[styles.modalActions, styles.hojaModalActions, isCompactModal && styles.modalActionsTouch]}>
+            {!isAdmin ? (
+              <>
+                <View style={styles.operadorStickyActions}>
+                  {renderOperadorActions(editingTrip)}
+                </View>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.hojaSecondaryBtn,
+                    pressed && styles.actionButtonPressed,
+                  ]}
+                  onPress={closeModal}
+                  disabled={saving}
+                >
+                  <Text style={styles.hojaSecondaryBtnText}>Cerrar</Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.hojaPrimaryBtn,
+                    pressed && styles.actionButtonPressed,
+                  ]}
+                  onPress={() => setAdminShowForm(true)}
+                >
+                  <FontAwesome5 name="edit" size={13} color="#ffffff" />
+                  <Text style={styles.hojaPrimaryBtnText}>Editar viaje</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.hojaSecondaryBtn,
+                    pressed && styles.actionButtonPressed,
+                  ]}
+                  onPress={closeModal}
+                  disabled={saving}
+                >
+                  <Text style={styles.hojaSecondaryBtnText}>Cerrar</Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+          {renderInModalSelectSheet()}
+        </View>
+      );
+
+      if (isCompactModal) {
+        return (
+          <SafeAreaView style={styles.modalSafeArea} edges={["top", "bottom"]}>
+            {hojaBody}
+          </SafeAreaView>
+        );
+      }
+      return hojaBody;
+    }
+
     const modalBody = (
       <View
         style={[styles.modalCard, isCompactModal && styles.modalCardTouch]}
-        onStartShouldSetResponder={() => true}
         {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
       >
         {isCompactModal && <View style={styles.modalDragHandle} />}
@@ -1580,7 +2467,7 @@ const deleteTrip = async (id: string) => {
                   ? editingTrip
                     ? "Actualiza la información del viaje"
                     : "Completa los datos para registrar el viaje"
-                  : "Consulta la información y controla el estado del viaje"}
+                  : "Consulta la información del viaje"}
               </Text>
             </View>
           </View>
@@ -1594,19 +2481,32 @@ const deleteTrip = async (id: string) => {
           </TouchableOpacity>
         </View>
 
-        <KeyboardAvoidingView
-          style={[styles.modalBodyWrap, isCompactModal && styles.modalBodyWrapTouch]}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          keyboardVerticalOffset={isCompactModal ? 12 : 0}
-        >
+        <View style={isCompactModal ? styles.modalBodyWrapTouch : styles.modalBodyWrap}>
           <ScrollView
             style={styles.modalScroll}
-            contentContainerStyle={[styles.modalScrollContent, isCompactModal && styles.modalScrollContentTouch]}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={[
+              styles.modalScrollContent,
+              isCompactModal && styles.modalScrollContentTouch,
+            ]}
+            showsVerticalScrollIndicator
+            keyboardShouldPersistTaps="always"
+            keyboardDismissMode="on-drag"
+            nestedScrollEnabled
+            bounces
           >
             {isAdmin ? (
               <>
+                {editingTrip && adminShowForm ? (
+                  <TouchableOpacity
+                    style={styles.sheetBackToDocBtn}
+                    onPress={() => setAdminShowForm(false)}
+                    activeOpacity={0.85}
+                  >
+                    <FontAwesome5 name="file-alt" size={13} color="#111111" />
+                    <Text style={styles.sheetBackToDocBtnText}>Ver hoja de viaje</Text>
+                  </TouchableOpacity>
+                ) : null}
+
                 {renderFormSection(
                   "Información general",
                   <>
@@ -1621,6 +2521,27 @@ const deleteTrip = async (id: string) => {
                       units.map((u) => ({ label: formatUnitLabel(u), value: u.id })),
                       "Seleccionar unidad"
                     )}
+                    {editingTrip && selectedUnit ? (
+                      <View style={styles.unitDetailRow}>
+                        {selectedUnit.imagenUrl ? (
+                          <Image
+                            source={{ uri: selectedUnit.imagenUrl }}
+                            style={styles.unitDetailPhoto}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <View style={styles.unitDetailPhotoPlaceholder}>
+                            <FontAwesome5 name="truck" size={18} color="#6b7280" />
+                          </View>
+                        )}
+                        <View style={styles.unitDetailText}>
+                          <Text style={styles.unitDetailName}>
+                            {formatUnitLabel(selectedUnit)}
+                          </Text>
+                          <Text style={styles.unitDetailPlaca}>Vista de la unidad</Text>
+                        </View>
+                      </View>
+                    ) : null}
                     {mostrarRemolque && (
                       <View style={styles.remolqueBox}>
                         <Text style={styles.remolqueHint}>
@@ -1753,40 +2674,41 @@ const deleteTrip = async (id: string) => {
 
                 {renderFormSection(
                   "Fechas y tiempo",
-                  <>
-                    {renderFieldRow(
-                      <>
-                        {renderFieldHalf(
-                          renderDateTimeField(
-                            "Fecha y hora de salida",
-                            fechaSalida,
-                            horaSalida,
-                            setFechaSalida,
-                            setHoraSalida,
-                            showSalidaPicker,
-                            setShowSalidaPicker,
-                            showSalidaTimePicker,
-                            setShowSalidaTimePicker
-                          )
-                        )}
-                        {renderFieldHalf(
-                          renderDateTimeField(
-                            "Fecha y hora de llegada",
-                            fechaLlegada,
-                            horaLlegada,
-                            setFechaLlegada,
-                            setHoraLlegada,
-                            showLlegadaPicker,
-                            setShowLlegadaPicker,
-                            showLlegadaTimePicker,
-                            setShowLlegadaTimePicker
-                          )
-                        )}
-                      </>
-                    )}
+                  <View style={styles.fechasSection}>
+                    <View style={styles.fechaBlock}>
+                      {renderDateTimeField(
+                        "Fecha y hora de salida",
+                        fechaSalida,
+                        horaSalida,
+                        handleFechaSalidaChange,
+                        handleHoraSalidaChange,
+                        showSalidaPicker,
+                        setShowSalidaPicker,
+                        showSalidaTimePicker,
+                        setShowSalidaTimePicker
+                      )}
+                    </View>
+                    <View style={styles.fechaBlock}>
+                      {renderDateTimeField(
+                        "Fecha y hora de llegada (opcional)",
+                        fechaLlegada,
+                        horaLlegada,
+                        handleFechaLlegadaChange,
+                        handleHoraLlegadaChange,
+                        showLlegadaPicker,
+                        setShowLlegadaPicker,
+                        showLlegadaTimePicker,
+                        setShowLlegadaTimePicker
+                      )}
+                      <Text style={styles.fechaAutoHint}>
+                        {llegadaTouched && (fechaLlegada || horaLlegada)
+                          ? "Llegada registrada manualmente (opcional)"
+                          : "No es obligatoria al crear. Se guarda sola cuando el operador finaliza el viaje."}
+                      </Text>
+                    </View>
                     {renderTravelTimeCard()}
                     {renderYesNoToggle("¿Multidestino?", multidestino, setMultidestino)}
-                  </>
+                  </View>
                 )}
 
                 {multidestino &&
@@ -1808,47 +2730,39 @@ const deleteTrip = async (id: string) => {
                             )}
                           </View>
 
-                          {renderFieldRow(
-                            <>
-                              {renderFieldHalf(
-                                renderDateTimeField(
-                                  "Fecha y hora de salida",
-                                  extra.fechaSalida,
-                                  extra.horaSalida,
-                                  (v) => updateDestinoExtraAt(index, { fechaSalida: v }),
-                                  (v) => updateDestinoExtraAt(index, { horaSalida: v }),
-                                  multiPicker?.index === index && multiPicker.field === "salidaDate",
-                                  (v) =>
-                                    setMultiPicker(
-                                      v ? { index, field: "salidaDate" } : null
-                                    ),
-                                  multiPicker?.index === index && multiPicker.field === "salidaTime",
-                                  (v) =>
-                                    setMultiPicker(
-                                      v ? { index, field: "salidaTime" } : null
-                                    )
-                                )
-                              )}
-                              {renderFieldHalf(
-                                renderDateTimeField(
-                                  "Fecha y hora de llegada",
-                                  extra.fechaLlegada,
-                                  extra.horaLlegada,
-                                  (v) => updateDestinoExtraAt(index, { fechaLlegada: v }),
-                                  (v) => updateDestinoExtraAt(index, { horaLlegada: v }),
-                                  multiPicker?.index === index && multiPicker.field === "llegadaDate",
-                                  (v) =>
-                                    setMultiPicker(
-                                      v ? { index, field: "llegadaDate" } : null
-                                    ),
-                                  multiPicker?.index === index && multiPicker.field === "llegadaTime",
-                                  (v) =>
-                                    setMultiPicker(
-                                      v ? { index, field: "llegadaTime" } : null
-                                    )
-                                )
-                              )}
-                            </>
+                          {renderDateTimeField(
+                            "Fecha y hora de salida",
+                            extra.fechaSalida,
+                            extra.horaSalida,
+                            (v) => updateDestinoExtraAt(index, { fechaSalida: v }),
+                            (v) => updateDestinoExtraAt(index, { horaSalida: v }),
+                            multiPicker?.index === index && multiPicker.field === "salidaDate",
+                            (v) =>
+                              setMultiPicker(
+                                v ? { index, field: "salidaDate" } : null
+                              ),
+                            multiPicker?.index === index && multiPicker.field === "salidaTime",
+                            (v) =>
+                              setMultiPicker(
+                                v ? { index, field: "salidaTime" } : null
+                              )
+                          )}
+                          {renderDateTimeField(
+                            "Fecha y hora de llegada",
+                            extra.fechaLlegada,
+                            extra.horaLlegada,
+                            (v) => updateDestinoExtraAt(index, { fechaLlegada: v }),
+                            (v) => updateDestinoExtraAt(index, { horaLlegada: v }),
+                            multiPicker?.index === index && multiPicker.field === "llegadaDate",
+                            (v) =>
+                              setMultiPicker(
+                                v ? { index, field: "llegadaDate" } : null
+                              ),
+                            multiPicker?.index === index && multiPicker.field === "llegadaTime",
+                            (v) =>
+                              setMultiPicker(
+                                v ? { index, field: "llegadaTime" } : null
+                              )
                           )}
 
                           {renderModalField(
@@ -1948,103 +2862,85 @@ const deleteTrip = async (id: string) => {
                   )}
               </>
             ) : (
-              (() => {
-                const trip = editingTrip;
-                if (!trip) {
-                  return (
-                    <View style={styles.emptyState}>
-                      <Text style={styles.emptyText}>Selecciona un viaje para ver el detalle.</Text>
-                    </View>
-                  );
-                }
-                const leg = getOperadorLegInfo(trip);
-                const unidadNombre = units.find((u) => u.id === leg.unidadId)?.nombre || leg.unidadId || "—";
-                const acompananteId = toId(leg.acompanante);
-                const acompananteNombre =
-                  !acompananteId || acompananteId === "none"
-                    ? "Sin acompañante"
-                    : users.find((u) => u.id === acompananteId)?.nombre ?? "Sin acompañante";
-
-                return (
-                  <>
-                    {renderFormSection(
-                      "Información del viaje",
-                      <>
-                        <View style={styles.specGrid}>
-                          <View style={styles.specItem}>
-                            <Text style={styles.specLabel}>Fecha y hora de salida</Text>
-                            <Text style={styles.specValue}>{formatDateTimeLabel(leg.fechaSalida)}</Text>
-                          </View>
-                          <View style={styles.specItem}>
-                            <Text style={styles.specLabel}>Fecha de llegada</Text>
-                            <Text style={styles.specValue}>{formatDateTimeLabel(leg.fechaLlegada)}</Text>
-                          </View>
-                          <View style={styles.specItem}>
-                            <Text style={styles.specLabel}>Destino</Text>
-                            <Text style={styles.specValue}>{leg.destino}</Text>
-                          </View>
-                          <View style={styles.specItem}>
-                            <Text style={styles.specLabel}>Acompañante</Text>
-                            <Text style={styles.specValue}>{acompananteNombre}</Text>
-                          </View>
-                          <View style={styles.specItem}>
-                            <Text style={styles.specLabel}>Unidad</Text>
-                            <Text style={styles.specValue}>{unidadNombre}</Text>
-                          </View>
-                          <View style={styles.specItem}>
-                            <Text style={styles.specLabel}>Estado</Text>
-                            <Text style={styles.specValue}>{trip.estado}</Text>
-                          </View>
-                        </View>
-                        {trip.multidestino ? (
-                          <Text style={styles.operadorLegHint}>
-                            {leg.label} · tramo {(trip.destinoActualIndex ?? 0) + 1} de {getTotalDestinosCount(trip)}
-                          </Text>
-                        ) : null}
-                      </>
-                    )}
-                    {renderFormSection("Acciones", renderOperadorActions(trip))}
-                  </>
-                );
-              })()
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>Completa el formulario para registrar el viaje.</Text>
+              </View>
             )}
           </ScrollView>
-        </KeyboardAvoidingView>
+        </View>
 
         <View style={[styles.modalActions, isCompactModal && styles.modalActionsTouch]}>
-          <Pressable
-            style={({ pressed }) => [
-              styles.cancelButton,
-              isCompactModal && styles.modalActionTouch,
-              !isAdmin && styles.cancelButtonFull,
-              pressed && styles.actionButtonPressed,
-            ]}
-            onPress={closeModal}
-            disabled={saving}
-          >
-            <Text style={[styles.cancelButtonText, isCompactModal && styles.actionButtonTextTouch]}>
-              {isAdmin ? "Cancelar" : "Cerrar"}
-            </Text>
-          </Pressable>
-          {isAdmin && (
-            <Pressable
-              style={({ pressed }) => [
-                styles.saveButton,
-                isCompactModal && styles.modalActionTouch,
-                saving && styles.saveButtonDisabled,
-                pressed && styles.actionButtonPressed,
-              ]}
-              onPress={saveTrip}
-              disabled={saving}
-            >
-              {saving ? (
-                <ActivityIndicator size="small" color="#ffffff" />
-              ) : (
-                <Text style={[styles.saveButtonText, isCompactModal && styles.actionButtonTextTouch]}>
-                  Guardar
-                </Text>
+          {isCompactModal ? (
+            <>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.hojaPrimaryBtn,
+                  saving && styles.saveButtonDisabled,
+                  pressed && styles.actionButtonPressed,
+                ]}
+                onPress={() => {
+                  void saveTrip();
+                }}
+                disabled={saving}
+              >
+                {saving ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.hojaPrimaryBtnText}>Guardar</Text>
+                )}
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.hojaSecondaryBtn,
+                  pressed && styles.actionButtonPressed,
+                ]}
+                onPress={closeModal}
+                disabled={saving}
+              >
+                <Text style={styles.hojaSecondaryBtnText}>Cancelar</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.cancelButton,
+                  pressed && styles.actionButtonPressed,
+                ]}
+                onPress={closeModal}
+                disabled={saving}
+              >
+                <Text style={styles.cancelButtonText}>Cancelar</Text>
+              </Pressable>
+              {isAdmin && (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.saveButton,
+                    saving && styles.saveButtonDisabled,
+                    pressed && styles.actionButtonPressed,
+                  ]}
+                  onPress={() => {
+                    void saveTrip();
+                  }}
+                  disabled={saving}
+                  accessibilityRole="button"
+                  accessibilityLabel="Guardar viaje"
+                  {...(Platform.OS === "web"
+                    ? {
+                        onClick: (e: any) => {
+                          e?.stopPropagation?.();
+                        },
+                      }
+                    : {})}
+                >
+                  {saving ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={styles.saveButtonText}>Guardar</Text>
+                  )}
+                </Pressable>
               )}
-            </Pressable>
+            </>
           )}
         </View>
         {renderInModalSelectSheet()}
@@ -2063,7 +2959,17 @@ const deleteTrip = async (id: string) => {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, isNarrowList && styles.containerNarrow]}>
+      <ScrollView
+        style={styles.pageScroll}
+        contentContainerStyle={[
+          styles.pageScrollContent,
+          isNarrowList && styles.pageScrollContentNarrow,
+        ]}
+        showsVerticalScrollIndicator
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+      >
       <View style={styles.pageHeader}>
         <View style={styles.pageHeaderText}>
           <Text style={[styles.pageTitle, isMobile && styles.pageTitleMobile]}>
@@ -2077,66 +2983,130 @@ const deleteTrip = async (id: string) => {
         </View>
       </View>
 
-      {isAdmin && (
+      {isAdmin ? (
         <View style={styles.toolbarPanel}>
           <View style={styles.toolbarActions}>
-            <TouchableOpacity style={[styles.addButton, isMobile && styles.addButtonMobile]} onPress={() => openModal()} activeOpacity={0.85}>
+            <TouchableOpacity style={[styles.addButton, isNarrowList && styles.addButtonMobile]} onPress={() => openModal()} activeOpacity={0.85}>
               <FontAwesome5 name="plus" size={14} color="#ffffff" />
               <Text style={styles.addButtonText}>Nuevo Viaje</Text>
             </TouchableOpacity>
           </View>
 
-          <View style={[styles.toolbarFiltersRow, isMobile && styles.toolbarFiltersRowMobile]}>
-            <View style={styles.filterBlock}>
-              <Text style={styles.toolbarLabel}>Periodo exportar</Text>
-              <View style={[styles.segmentedControl, isMobile && styles.segmentedControlMobile]}>
-                {exportOptions.map((opt) => {
-                  const isActive = exportType === opt.value;
-                  return (
-                    <TouchableOpacity
-                      key={opt.value}
-                      style={[
-                        styles.filterPill,
-                        isMobile && styles.filterPillMobile,
-                        isActive && styles.filterPillActive,
-                      ]}
-                      onPress={() => setExportType(opt.value)}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={[styles.filterPillText, isActive && styles.filterPillTextActive]}>
-                        {opt.label}
+          {!isNarrowList ? (
+            <View style={styles.toolbarFiltersRow}>
+              <View style={styles.filterBlock}>
+                <Text style={styles.toolbarLabel}>Periodo exportar</Text>
+                <View style={styles.segmentedControl}>
+                  {exportOptions.map((opt) => {
+                    const isActive = exportType === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[styles.filterPill, isActive && styles.filterPillActive]}
+                        onPress={() => setExportType(opt.value)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.filterPillText, isActive && styles.filterPillTextActive]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.toolbarRightActions}>
+                <View style={styles.weekFilterInline}>
+                  <Text style={styles.toolbarLabel}>Semana</Text>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.weekSelectTrigger,
+                      styles.weekSelectTriggerCompact,
+                      pressed && styles.weekSelectTriggerPressed,
+                    ]}
+                    onPress={openWeekSheet}
+                  >
+                    <View style={styles.weekSelectIconWrap}>
+                      <FontAwesome5 name="calendar-week" size={14} color="#111111" />
+                    </View>
+                    <View style={styles.weekSelectTriggerTextWrap}>
+                      <Text style={styles.weekSelectValue} numberOfLines={1}>
+                        {weekSelectLabel}
                       </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+                    </View>
+                    <FontAwesome5 name="chevron-down" size={11} color="#6b7280" />
+                  </Pressable>
+                </View>
+
+                <TouchableOpacity style={styles.exportButton} onPress={exportToExcel} activeOpacity={0.85}>
+                  <FontAwesome5 name="file-excel" size={14} color="#111111" />
+                  <Text style={styles.exportButtonText}>Exportar Excel</Text>
+                </TouchableOpacity>
               </View>
             </View>
-
-            <TouchableOpacity
-              style={[styles.exportButton, isMobile && styles.exportButtonMobile]}
-              onPress={exportToExcel}
-              activeOpacity={0.85}
-            >
-              <FontAwesome5 name="file-excel" size={14} color="#111111" />
-              <Text style={styles.exportButtonText}>Exportar Excel</Text>
-            </TouchableOpacity>
-          </View>
+          ) : (
+            <View style={styles.toolbarRightActionsMobile}>
+              <TouchableOpacity style={[styles.exportButton, styles.exportButtonMobile]} onPress={exportToExcel} activeOpacity={0.85}>
+                <FontAwesome5 name="file-excel" size={14} color="#111111" />
+                <Text style={styles.exportButtonText}>Exportar Excel</Text>
+              </TouchableOpacity>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.weekSelectTrigger,
+                  styles.weekSelectTriggerMobile,
+                  pressed && styles.weekSelectTriggerPressed,
+                ]}
+                onPress={openWeekSheet}
+              >
+                <View style={styles.weekSelectIconWrap}>
+                  <FontAwesome5 name="calendar-week" size={14} color="#111111" />
+                </View>
+                <View style={styles.weekSelectTriggerTextWrap}>
+                  <Text style={styles.weekSelectHint}>Semana</Text>
+                  <Text style={styles.weekSelectValue} numberOfLines={1}>
+                    {weekSelectLabel}
+                  </Text>
+                </View>
+                <FontAwesome5 name="chevron-down" size={11} color="#6b7280" />
+              </Pressable>
+            </View>
+          )}
+        </View>
+      ) : (
+        <View style={[styles.toolbarPanel, styles.listFilterPanel]}>
+          <Text style={styles.toolbarLabel}>Semana</Text>
+          <Pressable
+            style={({ pressed }) => [
+              styles.weekSelectTrigger,
+              pressed && styles.weekSelectTriggerPressed,
+            ]}
+            onPress={openWeekSheet}
+          >
+            <View style={styles.weekSelectIconWrap}>
+              <FontAwesome5 name="calendar-week" size={15} color="#111111" />
+            </View>
+            <View style={styles.weekSelectTriggerTextWrap}>
+              <Text style={styles.weekSelectHint}>Lunes a domingo</Text>
+              <Text style={styles.weekSelectValue} numberOfLines={1}>
+                {weekSelectLabel}
+              </Text>
+            </View>
+            <View style={styles.weekSelectChevron}>
+              <FontAwesome5 name="chevron-down" size={11} color="#6b7280" />
+            </View>
+          </Pressable>
         </View>
       )}
 
-      <View style={styles.listPanel}>
-        {!loading && !loadError && trips.length > 0 && (
-          <View style={[styles.listHeader, isMobile && styles.listHeaderMobile]}>
-            <Text style={styles.listHeaderTitle}>{trips.length} viajes</Text>
-            {isAdmin ? (
-              <Text style={[styles.listHeaderHint, isMobile && styles.listHeaderHintMobile]}>
-                Exportar: {exportOptions.find((o) => o.value === exportType)?.label}
-              </Text>
-            ) : (
-              <Text style={[styles.listHeaderHint, isMobile && styles.listHeaderHintMobile]}>
-                Tus viajes asignados
-              </Text>
-            )}
+      <View style={[styles.listPanel, isNarrowList && styles.listPanelNarrow]}>
+        {!loading && !loadError && (
+          <View style={[styles.listHeader, isNarrowList && styles.listHeaderMobile]}>
+            <Text style={styles.listHeaderTitle}>
+              {displayedTrips.length} viaje{displayedTrips.length === 1 ? "" : "s"}
+            </Text>
+            <Text style={[styles.listHeaderHint, isNarrowList && styles.listHeaderHintMobile]}>
+              {weekLabel}
+            </Text>
           </View>
         )}
 
@@ -2161,19 +3131,27 @@ const deleteTrip = async (id: string) => {
               {isAdmin ? 'Pulsa "Nuevo Viaje" para crear el primero.' : "Aún no tienes viajes asignados."}
             </Text>
           </View>
+        ) : displayedTrips.length === 0 ? (
+          <View style={styles.emptyState}>
+            <FontAwesome5 name="calendar-week" size={22} color="#9ca3af" />
+            <Text style={styles.emptyTitle}>Sin viajes esta semana</Text>
+            <Text style={styles.emptyText}>
+              Elige otra semana en el selector para ver más resultados.
+            </Text>
+          </View>
         ) : (
-          <FlatList
-            data={trips}
-            keyExtractor={(item) => item.id}
-            renderItem={renderItem}
-            contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
-            numColumns={isMobile ? 1 : 2}
-            columnWrapperStyle={isMobile ? undefined : styles.listRow}
-            scrollEnabled={false}
-          />
+          <View style={styles.tripsStack}>
+            {displayedTrips.map((item) => (
+              <View key={item.id} style={styles.tripStackItem}>
+                {renderItem({ item })}
+              </View>
+            ))}
+          </View>
         )}
       </View>
+      </ScrollView>
+
+      {renderWeekSelectSheet()}
 
       {Platform.OS === "web" && modalVisible ? (
         <Portal>
@@ -2203,6 +3181,10 @@ const deleteTrip = async (id: string) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1,paddingVertical: 4,backgroundColor: "transparent",},
+  containerNarrow: { marginHorizontal: -6 },
+  pageScroll: { flex: 1, minHeight: 0 },
+  pageScrollContent: { paddingBottom: 28, flexGrow: 1 },
+  pageScrollContentNarrow: { paddingBottom: 40 },
   pageHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16,},
   pageHeaderText: { flex: 1, paddingRight: 12 },
   pageTitle: { fontSize: 24, fontWeight: "800", color: "#111111", letterSpacing: 0.2 },
@@ -2210,7 +3192,40 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 13, color: "#6b7280", marginTop: 4 },
   toolbarPanel: {backgroundColor: "#ffffff",borderRadius: 14,borderWidth: 1,borderColor: "#e5e7eb",padding: 14,marginBottom: 14,gap: 12,...(Platform.OS === "web"  ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any } : {}),},
   toolbarActions: { flexDirection: "row", alignItems: "center" },
-  toolbarFiltersRow: {flexDirection: "row",alignItems: "flex-end",justifyContent: "space-between",gap: 12,paddingTop: 12,borderTopWidth: 1,borderTopColor: "#f3f4f6", },
+  toolbarFiltersRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#f3f4f6",
+    flexWrap: "wrap",
+  },
+  toolbarRightActions: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 10,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  toolbarRightActionsMobile: {
+    gap: 10,
+    width: "100%",
+  },
+  weekFilterInline: {
+    minWidth: 220,
+    maxWidth: 320,
+    flex: 1,
+  },
+  weekSelectTriggerCompact: {
+    minHeight: 42,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  weekSelectTriggerMobile: {
+    width: "100%",
+  },
   toolbarFiltersRowMobile: { flexDirection: "column", alignItems: "stretch" },
   toolbarFiltersRowOperador: { borderTopWidth: 0, paddingTop: 0 },
   filterBlock: { flex: 1, minWidth: 0 },
@@ -2232,27 +3247,163 @@ const styles = StyleSheet.create({
   },
   exportButtonMobile: { width: "100%" },
   exportButtonText: { color: "#111111", fontWeight: "700", fontSize: 14 },
-  listPanel: { backgroundColor: "#ffffff", borderRadius: 14, borderWidth: 1, borderColor: "#e5e7eb", padding: 14, flex: 1,
+  listPanel: {
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
+    width: "100%",
+    alignSelf: "stretch",
     ...(Platform.OS === "web"
       ? { boxShadow: "0 8px 24px rgba(0,0,0,0.04)" as any }
       : {}),
   },
+  listPanelNarrow: { paddingHorizontal: 10, paddingVertical: 12, borderRadius: 12 },
   listHeader: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",paddingBottom: 12,marginBottom: 12,borderBottomWidth: 1,borderBottomColor: "#f3f4f6", },
   listHeaderMobile: { flexDirection: "column", alignItems: "flex-start", gap: 4 },
   listHeaderTitle: { fontSize: 14, fontWeight: "700", color: "#111111" },
   listHeaderHint: { fontSize: 12, color: "#9ca3af", fontWeight: "600" },
   listHeaderHintMobile: { fontSize: 12 },
-  listContent: { paddingBottom: 8, gap: 12 },
-  listRow: { gap: 12 },
+  tripsStack: { width: "100%", gap: 12, paddingBottom: 8 },
+  tripStackItem: { width: "100%", alignSelf: "stretch" },
   emptyState: { paddingVertical: 48,paddingHorizontal: 20,alignItems: "center",gap: 8,},
   emptyTitle: { fontSize: 16, fontWeight: "700", color: "#111111" },
   emptyText: { fontSize: 14, color: "#64748b", textAlign: "center" },
   retryButton: {marginTop: 8,backgroundColor: "#111111",paddingHorizontal: 16,paddingVertical: 10,borderRadius: 999,   ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}), },
   retryButtonText: { color: "#fff", fontWeight: "700" },
-  card: { flexDirection: "row",backgroundColor: "#fafafa",borderRadius: 14,borderWidth: 1,borderColor: "#e5e7eb",padding: 14,flex: 1,gap: 12, },
-  cardMobile: { width: "100%" },
+  card: {
+    flexDirection: "row",
+    backgroundColor: "#fafafa",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
+    gap: 12,
+    width: "100%",
+  },
+  cardSlot: { width: "100%", alignSelf: "stretch" },
+  cardFullWidth: {
+    width: "100%",
+    maxWidth: "100%" as any,
+    alignSelf: "stretch",
+    flexGrow: 0,
+  },
+  cardMobileCompact: {
+    padding: 14,
+    backgroundColor: "#ffffff",
+  },
+  cardTitleMobileCompact: {
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  mobileDestinoBlock: {
+    backgroundColor: "#f9fafb",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  mobileDestinoValue: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111111",
+    marginTop: 2,
+  },
+  mobileCardActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  mobileDetailsBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#111111",
+    borderRadius: 12,
+    paddingVertical: 12,
+    minHeight: 46,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  mobileDetailsBtnText: {
+    color: "#ffffff",
+    fontWeight: "800",
+    fontSize: 14,
+  },
+  mobileDeleteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#fef2f2",
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 46,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  mobileDeleteBtnText: {
+    color: "#dc2626",
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  mobileRepeatBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#111111",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 46,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  mobileRepeatBtnText: {
+    color: "#111111",
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  fechaAutoHint: {
+    marginTop: 8,
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#9ca3af",
+  },
+  unitDetailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 8,
+  },
+  unitDetailPhoto: {
+    width: 64,
+    height: 64,
+    borderRadius: 12,
+    backgroundColor: "#f3f4f6",
+  },
+  unitDetailPhotoPlaceholder: {
+    width: 64,
+    height: 64,
+    borderRadius: 12,
+    backgroundColor: "#f3f4f6",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  unitDetailText: { flex: 1, minWidth: 0 },
+  unitDetailName: { fontSize: 14, fontWeight: "800", color: "#111111" },
+  unitDetailPlaca: { fontSize: 12, fontWeight: "600", color: "#6b7280", marginTop: 2 },
   cardOperadorMobile: { padding: 14 },
-  cardDesktop: { minWidth: 0, maxWidth: "49%" as any },
   cardIconWrap: {width: 44,height: 44,borderRadius: 12,backgroundColor: "#ffffff",borderWidth: 1,borderColor: "#e5e7eb",alignItems: "center",justifyContent: "center",},
   cardBody: { flex: 1, minWidth: 0 },
   cardHeader: {flexDirection: "row",alignItems: "center",justifyContent: "space-between",gap: 8,marginBottom: 10,},
@@ -2268,8 +3419,339 @@ const styles = StyleSheet.create({
   estadoTextProgreso: { color: "#2563eb" },
   estadoTextParada: { color: "#7c3aed" },
   estadoTextCompletado: { color: "#059669" },
+  listFilterPanel: { marginBottom: 14 },
+  weekSelectTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#fafafa",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    minHeight: 56,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  weekSelectTriggerPressed: { backgroundColor: "#f3f4f6", borderColor: "#d1d5db" },
+  weekSelectIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  weekSelectTriggerTextWrap: { flex: 1, minWidth: 0 },
+  weekSelectHint: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#9ca3af",
+    textTransform: "uppercase",
+    letterSpacing: 0.45,
+    marginBottom: 2,
+  },
+  weekSelectValue: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#111111",
+  },
+  weekSelectChevron: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  weekSheetOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 90,
+    justifyContent: "flex-end",
+    alignItems: "stretch",
+    ...(Platform.OS === "web"
+      ? {
+          position: "fixed" as any,
+          width: "100vw" as any,
+          height: "100dvh" as any,
+        }
+      : {}),
+  },
+  weekSheetOverlayDesktop: {
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  weekSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(17, 24, 39, 0.45)",
+    ...(Platform.OS === "web" ? { backdropFilter: "blur(2px)" as any } : {}),
+  },
+  weekSheetCard: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    overflow: "hidden",
+    zIndex: 91,
+  },
+  weekSheetCardMobile: {
+    width: "100%",
+    maxHeight: "78%",
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    borderBottomWidth: 0,
+    paddingBottom: Platform.OS === "ios" ? 10 : 6,
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 -12px 40px rgba(0,0,0,0.16)" as any }
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.18,
+          shadowRadius: 18,
+          shadowOffset: { width: 0, height: -6 },
+          elevation: 16,
+        }),
+  },
+  weekSheetCardDesktop: {
+    width: "100%",
+    maxWidth: 420,
+    maxHeight: 520,
+    borderRadius: 18,
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 24px 60px rgba(0,0,0,0.22)" as any }
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.2,
+          shadowRadius: 24,
+          shadowOffset: { width: 0, height: 12 },
+          elevation: 20,
+        }),
+  },
+  weekSheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#d1d5db",
+    alignSelf: "center",
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  weekSheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+  },
+  weekSheetHeaderDesktop: {
+    paddingTop: 16,
+    paddingHorizontal: 18,
+  },
+  weekSheetHeaderText: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+    minWidth: 0,
+  },
+  weekSheetIconBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    backgroundColor: "#111111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  weekSheetTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#111111",
+    letterSpacing: 0.1,
+  },
+  weekSheetSubtitle: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#9ca3af",
+    marginTop: 1,
+  },
+  weekSheetClose: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: "#f3f4f6",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  weekSheetClosePressed: { backgroundColor: "#e5e7eb" },
+  weekSheetList: { maxHeight: 420 },
+  weekSheetListDesktop: { maxHeight: 400 },
+  weekSheetListContent: { padding: 10, paddingBottom: 18, gap: 6 },
+  weekOptionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "transparent",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  weekOptionRowHover: { backgroundColor: "#f9fafb" },
+  weekOptionRowActive: {
+    backgroundColor: "#f3f4f6",
+    borderColor: "#e5e7eb",
+  },
+  weekOptionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#e5e7eb",
+  },
+  weekOptionDotActive: { backgroundColor: "#111111" },
+  weekOptionTextWrap: { flex: 1, minWidth: 0, gap: 4 },
+  weekOptionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111111",
+  },
+  weekOptionTitleActive: { fontWeight: "800" },
+  weekOptionMetaRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  weekOptionSub: { fontSize: 11, fontWeight: "600", color: "#9ca3af" },
+  weekOptionBadge: {
+    backgroundColor: "#111111",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  weekOptionBadgeText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#ffffff",
+    letterSpacing: 0.3,
+  },
+  weekOptionCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "#111111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   specGridOperador: { gap: 10 },
   specItemOperador: { minWidth: "100%", flexBasis: "100%" },
+  specItemHalf: { minWidth: "47%", flexGrow: 1, flexBasis: "47%" },
+  specItemFull: { minWidth: "100%", flexBasis: "100%" },
+  specGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
+  specItem: {minWidth: "46%",flexGrow: 1,backgroundColor: "#ffffff",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",paddingHorizontal: 10,paddingVertical: 8,},
+  webDateTimeField: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+    minWidth: 0,
+    maxWidth: "100%",
+    gap: 6,
+  },
+  webDateTimeFieldStacked: {
+    width: "100%",
+    maxWidth: "100%",
+    alignSelf: "stretch",
+    gap: 6,
+  },
+  webDateTimeHint: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#9ca3af",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  dateTimeStackWeb: {
+    width: "100%",
+    maxWidth: "100%",
+    gap: 12,
+    alignSelf: "stretch",
+  },
+  dateTimeHitBox: {
+    position: "relative",
+    width: "100%",
+    maxWidth: "100%",
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#f9fafb",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    overflow: "hidden",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const, boxSizing: "border-box" as any } : {}),
+  },
+  dateTimeHitBoxTouch: {
+    minHeight: 54,
+    paddingVertical: 14,
+    borderRadius: 14,
+  },
+  dateTimeHitText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111111",
+  },
+  webNativePickerOverlay: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: "100%",
+    height: "100%",
+    // opacity 0 a veces no recibe clics en Chrome; 0.01 sí
+    opacity: 0.01,
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    zIndex: 6,
+    fontSize: 16,
+    cursor: "pointer",
+    color: "transparent",
+    ...(Platform.OS === "web"
+      ? {
+          WebkitAppearance: "none",
+          appearance: "none",
+          margin: 0,
+          padding: 0,
+          pointerEvents: "auto",
+        }
+      : {}),
+  } as any,
+  dateTimeInputStacked: {
+    width: "100%",
+    alignSelf: "stretch",
+    flexGrow: 0,
+  },
+  webPickerHit: {
+    position: "relative",
+    overflow: "hidden",
+    width: "100%",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
   operadorCardFooter: {
     marginTop: 4,
     gap: 10,
@@ -2282,6 +3764,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+  },
+  operadorActionsRowSticky: {
+    flexDirection: "column",
+    flexWrap: "nowrap",
+    width: "100%",
+    gap: 10,
   },
   operadorActionsRowCompact: {
     marginBottom: 4,
@@ -2308,6 +3796,14 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 14,
   },
+  operadorActionBtnFixed: {
+    width: "100%",
+    justifyContent: "center",
+    minHeight: 52,
+    borderRadius: 14,
+    paddingVertical: 15,
+    gap: 10,
+  },
   operadorActionPrimary: {
     backgroundColor: "#111111",
     borderColor: "#111111",
@@ -2322,24 +3818,469 @@ const styles = StyleSheet.create({
   },
   operadorActionText: {
     color: "#111111",
-    fontWeight: "700",
-    fontSize: 13,
+    fontWeight: "800",
+    fontSize: 15,
   },
   operadorActionTextPrimary: {
     color: "#ffffff",
-    fontWeight: "700",
-    fontSize: 13,
+    fontWeight: "800",
+    fontSize: 15,
   },
   operadorActionTextDanger: {
     color: "#dc2626",
+    fontWeight: "800",
+    fontSize: 15,
+  },
+  operadorStickyActions: {
+    width: "100%",
+    gap: 10,
+  },
+  opDetailStack: {
+    gap: 10,
+  },
+  sheetPaper: {
+    backgroundColor: "#fafafa",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    overflow: "hidden",
+    marginBottom: 4,
+  },
+  sheetPaperTouch: {
+    borderRadius: 18,
+  },
+  sheetTopBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: "#111111",
+  },
+  sheetBrandMark: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: "#2a2a2a",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sheetDocLabel: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  sheetDocMeta: {
+    color: "#a3a3a3",
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 2,
+  },
+  sheetHero: {
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 16,
+    backgroundColor: "#ffffff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  sheetHeroEyebrow: {
+    fontSize: 11,
     fontWeight: "700",
+    color: "#9ca3af",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+    marginBottom: 6,
+  },
+  sheetHeroTitle: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#111111",
+    lineHeight: 28,
+  },
+  sheetHeroDivider: {
+    height: 1,
+    backgroundColor: "#ececec",
+    marginVertical: 14,
+  },
+  sheetHeroDestino: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#1f2937",
+    lineHeight: 24,
+  },
+  sheetSection: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+    backgroundColor: "#fafafa",
+  },
+  sheetSectionTitle: {
     fontSize: 13,
+    fontWeight: "800",
+    color: "#374151",
+    marginBottom: 12,
+    letterSpacing: 0.3,
+  },
+  sheetTimeline: {
+    gap: 0,
+  },
+  sheetTimelineItem: {
+    flexDirection: "row",
+    gap: 12,
+    minHeight: 88,
+  },
+  sheetTimelineRail: {
+    width: 28,
+    alignItems: "center",
+  },
+  sheetTimelineDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#e5e7eb",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#d1d5db",
+  },
+  sheetTimelineDotDone: {
+    backgroundColor: "#059669",
+    borderColor: "#047857",
+  },
+  sheetTimelineDotCurrent: {
+    backgroundColor: "#111111",
+    borderColor: "#111111",
+  },
+  sheetTimelineDotNum: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#4b5563",
+  },
+  sheetTimelineDotNumCurrent: {
+    color: "#ffffff",
+  },
+  sheetTimelineLine: {
+    flex: 1,
+    width: 2,
+    backgroundColor: "#e5e7eb",
+    marginTop: 4,
+    marginBottom: 4,
+    minHeight: 24,
+  },
+  sheetTimelineLineDone: {
+    backgroundColor: "#6ee7b7",
+  },
+  sheetStopCard: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 12,
+    marginBottom: 12,
+  },
+  sheetStopCardCurrent: {
+    borderColor: "#111111",
+    borderWidth: 1.5,
+    backgroundColor: "#ffffff",
+  },
+  sheetStopCardDone: {
+    borderColor: "#a7f3d0",
+    backgroundColor: "#f0fdf4",
+  },
+  sheetStopHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 4,
+  },
+  sheetStopTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#6b7280",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  sheetNowBadge: {
+    backgroundColor: "#111111",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  sheetNowBadgeText: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  sheetStopDestino: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#111111",
+    marginBottom: 10,
+    lineHeight: 21,
+  },
+  sheetStopTimes: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  sheetStopTimeBlock: {
+    flex: 1,
+    backgroundColor: "#f9fafb",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  sheetStopTimeLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#9ca3af",
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  sheetStopTimeValue: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#1f2937",
+  },
+  sheetStopDefRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 10,
+    backgroundColor: "#f9fafb",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  sheetStopDefLabel: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#6b7280",
+  },
+  sheetStopDefValue: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#111111",
+  },
+  sheetMetaGrid: {
+    gap: 10,
+    paddingBottom: 12,
+  },
+  sheetMetaItem: {
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  sheetMetaItemFull: {
+    width: "100%",
+  },
+  sheetMetaLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#9ca3af",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 4,
+  },
+  sheetMetaValue: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111111",
+  },
+  sheetBackToDocBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#111111",
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+  },
+  sheetBackToDocBtnText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#111111",
+  },
+  hojaModalCard: {
+    backgroundColor: "#f4f6f9",
+  },
+  hojaModalTop: {
+    alignItems: "flex-end",
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 4,
+    flexShrink: 0,
+    backgroundColor: "#f4f6f9",
+  },
+  hojaScrollContent: {
+    paddingTop: 4,
+  },
+  hojaModalActions: {
+    flexDirection: "column",
+    gap: 10,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 18,
+  },
+  hojaPrimaryBtn: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#111111",
+    borderRadius: 12,
+    paddingVertical: 14,
+    minHeight: 52,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  hojaPrimaryBtnText: {
+    color: "#ffffff",
+    fontWeight: "800",
+    fontSize: 15,
+  },
+  hojaSecondaryBtn: {
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "#111111",
+    paddingVertical: 14,
+    minHeight: 52,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  hojaSecondaryBtnText: {
+    color: "#111111",
+    fontWeight: "800",
+    fontSize: 15,
+  },
+  mobileStopsChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  mobileStopChipMain: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#111111",
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    maxWidth: "100%",
+  },
+  mobileStopChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#f3f4f6",
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    maxWidth: "100%",
+  },
+  mobileStopChipIndex: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#ffffff",
+    backgroundColor: "#374151",
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    textAlign: "center",
+    lineHeight: 18,
+    overflow: "hidden",
+  },
+  mobileStopChipIndexLight: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#111111",
+    backgroundColor: "#ffffff",
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    textAlign: "center",
+    lineHeight: 18,
+    overflow: "hidden",
+  },
+  mobileStopChipText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111111",
+    maxWidth: 140,
+  },
+  mobileStopChipTextLight: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#ffffff",
+    maxWidth: 140,
+  },
+  opDetailField: {
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  opDetailFieldUnit: {
+    paddingBottom: 12,
+  },
+  opDetailLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#9ca3af",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 4,
+  },
+  opDetailValue: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111111",
+    lineHeight: 22,
+  },
+  fechaBlock: {
+    width: "100%",
+    maxWidth: "100%",
+    alignSelf: "stretch",
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
+    overflow: "hidden",
+    gap: 4,
+  },
+  fechasSection: {
+    gap: 14,
+    width: "100%",
+    maxWidth: "100%",
+    alignSelf: "stretch",
   },
   operadorDoneBox: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     paddingVertical: 8,
+    justifyContent: "center",
   },
   operadorDoneHint: {
     fontSize: 13,
@@ -2359,13 +4300,11 @@ const styles = StyleSheet.create({
     color: "#111111",
   },
   operadorLegHint: {
-    marginTop: 10,
+    marginTop: 4,
     fontSize: 12,
     fontWeight: "600",
     color: "#6b7280",
   },
-  specGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
-  specItem: {minWidth: "46%",flexGrow: 1,backgroundColor: "#ffffff",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",paddingHorizontal: 10,paddingVertical: 8,},
   specLabel: {fontSize: 10,fontWeight: "700",color: "#9ca3af",textTransform: "uppercase",letterSpacing: 0.4,},
   specValue: { fontSize: 13, fontWeight: "600", color: "#111111", marginTop: 2 },
   cardActions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
@@ -2389,13 +4328,30 @@ const styles = StyleSheet.create({
   } as any,
   webModalOverlayTouch: {
     padding: 0,
-    justifyContent: "flex-end",
+    justifyContent: "flex-start",
     alignItems: "stretch",
     overflow: "hidden",
+    height: "100dvh" as any,
+    maxHeight: "100dvh" as any,
+    display: "flex" as any,
+    flexDirection: "column" as any,
   } as any,
   modalContainer: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)", padding: 16 },
-  modalContainerTouch: { padding: 0, justifyContent: "flex-end", backgroundColor: "#ffffff" },
-  modalSafeArea: { flex: 1, backgroundColor: "#ffffff", width: "100%" },
+  modalContainerTouch: { padding: 0, justifyContent: "flex-start", backgroundColor: "#ffffff" },
+  modalSafeArea: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+    width: "100%",
+    ...(Platform.OS === "web"
+      ? {
+          height: "100%" as any,
+          maxHeight: "100dvh" as any,
+          display: "flex" as any,
+          flexDirection: "column" as any,
+          minHeight: 0,
+        }
+      : {}),
+  },
   modalCard: {
     width: "100%",
     maxWidth: 720,
@@ -2420,14 +4376,16 @@ const styles = StyleSheet.create({
   modalCardTouch: {
     width: "100%",
     maxWidth: "100%",
-    maxHeight: Platform.OS === "web" ? ("100dvh" as any) : "100%",
-    height: Platform.OS === "web" ? ("100dvh" as any) : "100%",
+    maxHeight: Platform.OS === "web" ? ("100%" as any) : "100%",
+    height: Platform.OS === "web" ? ("100%" as any) : "100%",
     borderRadius: 0,
-    borderTopLeftRadius: Platform.OS === "web" ? 0 : 20,
-    borderTopRightRadius: Platform.OS === "web" ? 0 : 20,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
     borderWidth: 0,
     flex: 1,
     alignSelf: "stretch",
+    overflow: "hidden",
+    minHeight: 0,
   },
   modalDragHandle: {
     width: 40,
@@ -2455,16 +4413,41 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     minWidth: 0,
-    ...(Platform.OS === "web" ? { maxHeight: "calc(90vh - 150px)" as any } : {}),
+    overflow: "hidden",
   },
   modalBodyWrapTouch: {
     flex: 1,
     minHeight: 0,
-    maxHeight: undefined as any,
+    minWidth: 0,
+    overflow: "hidden",
+    ...(Platform.OS === "web"
+      ? {
+          // Trick CSS: flex child scroll area needs a bounded height
+          flexBasis: 0 as any,
+          height: 0 as any,
+          flexGrow: 1,
+          flexShrink: 1,
+        }
+      : {}),
   },
-  modalScroll:{ flex: 1, minHeight: 0, minWidth: 0 },
-  modalScrollContent:{paddingHorizontal: 22, paddingTop: 18, paddingBottom: 24, flexGrow: 1 },
-  modalScrollContentTouch: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 20 },
+  modalScroll:{
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+    ...(Platform.OS === "web" ? ({ WebkitOverflowScrolling: "touch", touchAction: "pan-y", overflowY: "auto" } as any) : {}),
+  },
+  modalScrollContent:{
+    paddingHorizontal: 22,
+    paddingTop: 18,
+    paddingBottom: 24,
+    flexGrow: 0,
+  },
+  modalScrollContentTouch: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 56,
+    flexGrow: 0,
+  },
   formSection: {
     backgroundColor: "#fafafa",
     borderRadius: 14,
@@ -2596,9 +4579,9 @@ const styles = StyleSheet.create({
   modalFieldHalf: { flexGrow: 1, flexShrink: 1, flexBasis: 220, minWidth: 0, maxWidth: "100%" },
   modalFieldFull: { flexGrow: 1, flexBasis: "100%", width: "100%", maxWidth: "100%", minWidth: 0 },
   modalInput: {width: "100%",maxWidth: "100%",height: 42,backgroundColor: "#ffffff",borderRadius: 10,borderWidth: 1,borderColor: "#e5e7eb",},
-  modalInputTouch: { height: 48, borderRadius: 12 },
+  modalInputTouch: { height: 52, borderRadius: 12, marginBottom: 2 },
   modalInputContent: { color: "#111111", fontWeight: "600", fontSize: 14 },
-  modalInputContentTouch: { fontSize: 16 },
+  modalInputContentTouch: { fontSize: 16, lineHeight: 22, paddingVertical: 4 },
   pickerWrap: { backgroundColor: "#ffffff", borderRadius: 10, borderWidth: 1, borderColor: "#e5e7eb", overflow: "hidden", width: "100%", maxWidth: "100%"},
   pickerWrapTouch: { borderRadius: 12, minHeight: 48, justifyContent: "center" },
   picker: { width: "100%", color: "#111111" },
@@ -2753,13 +4736,26 @@ const styles = StyleSheet.create({
   webDatePickerTouch: { height: 48, borderRadius: 12, fontSize: 16, padding: 12 },
   webSelect: { padding: 10, borderRadius: 10, borderWidth: 1, borderColor: "#e5e7eb", backgroundColor: "#ffffff", width: "100%", fontSize: 14, fontWeight: "600", color: "#111111", height: 42 },
   webSelectTouch: { height: 48, borderRadius: 12, fontSize: 16, padding: 12 },
-  dateTimeRow: { flexDirection: "row", gap: 8, alignItems: "center" },
-  dateTimeRowStack: { flexDirection: "column", alignItems: "stretch", gap: 10 },
-  dateTimeInput: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#ffffff", borderRadius: 10, borderWidth: 1, borderColor: "#e5e7eb", paddingHorizontal: 12, paddingVertical: 11 },
-  dateTimeInputTouch: { width: "100%", minHeight: 48, borderRadius: 12, paddingVertical: 14 },
-  dateTimeText: { fontSize: 14, fontWeight: "600", color: "#111111" },
-  travelTimeCard: { backgroundColor: "#ffffff", borderRadius: 12, borderWidth: 1, borderColor: "#e5e7eb", padding: 16, marginTop: 4 },
-  travelTimeCardTouch: { padding: 18, borderRadius: 14, marginTop: 8 },
+  dateTimeRow: { flexDirection: "column", gap: 10, alignItems: "stretch", width: "100%", maxWidth: "100%" },
+  dateTimeRowStack: { flexDirection: "column", alignItems: "stretch", gap: 10, width: "100%" },
+  dateTimeInput: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#f9fafb",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    minHeight: 48,
+    alignSelf: "stretch",
+  },
+  dateTimeInputTouch: { width: "100%", minHeight: 52, borderRadius: 12, paddingVertical: 14 },
+  dateTimeText: { fontSize: 14, fontWeight: "600", color: "#111111", flex: 1, minWidth: 0 },
+  travelTimeCard: { backgroundColor: "#f9fafb", borderRadius: 14, borderWidth: 1, borderColor: "#e5e7eb", padding: 16, marginTop: 2 },
+  travelTimeCardTouch: { padding: 18, borderRadius: 14, marginTop: 4 },
   travelTimeCardLive: { backgroundColor: "#ecfdf5", borderColor: "#a7f3d0" },
   travelTimeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   travelTimeHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
@@ -2782,8 +4778,15 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     backgroundColor: "#ffffff",
   },
+  modalActionsOperador: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 18,
+  },
   modalActionsTouch: {
-    flexDirection: "row",
     gap: 10,
     paddingHorizontal: 16,
     paddingTop: 12,

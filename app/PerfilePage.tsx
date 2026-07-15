@@ -21,18 +21,23 @@ interface PerfilPageProps {
   setCurrentUser?: (user: User) => void;
 }
 
-const roles: { value: "Admin" | "Chofer"; label: string; icon: string }[] = [
+const roles: { value: "Admin" | "Operador"; label: string; icon: string }[] = [
   { value: "Admin", label: "Admin", icon: "user-shield" },
-  { value: "Chofer", label: "Chofer", icon: "truck" },
+  { value: "Operador", label: "Operador", icon: "truck" },
 ];
 
 export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPageProps) {
   const { width } = useWindowDimensions();
   const isLargeScreen = width >= 768;
 
+  const initialRole =
+    currentUser?.rol === "Admin"
+      ? "Admin"
+      : ("Operador" as "Admin" | "Operador");
+
   const [nombre, setNombre] = useState(currentUser?.nombre ?? "");
   const [apellido, setApellido] = useState(currentUser?.apellido ?? "");
-  const [rol, setRol] = useState<"Admin" | "Chofer">(currentUser?.rol ?? "Chofer");
+  const [rol, setRol] = useState<"Admin" | "Operador">(initialRole);
   const [email, setEmail] = useState(currentUser?.email ?? "");
   const [contacto, setContacto] = useState(currentUser?.contacto ?? "");
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -46,7 +51,9 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     setNombre(currentUser.nombre || "");
     setApellido(currentUser.apellido || "");
     setEmail(currentUser.email || "");
-    setRol(currentUser.rol || "Chofer");
+    setRol(
+      currentUser.rol === "Admin" ? "Admin" : "Operador"
+    );
 
     if (currentUser.photoUrl) {
       const imageURL = currentUser.photoUrl.startsWith("http")
