@@ -16,12 +16,12 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { Appbar, Avatar, Badge, Divider } from "react-native-paper"; // <-- Importamos Badge
+import { Appbar, Badge, Divider } from "react-native-paper"; // <-- Importamos Badge
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useStore } from "../context/Store";
 import { useNotifications } from "../hooks/useNotifications";
 import { usePushNotifications } from "../hooks/usePushNotifications";
-import { api } from "../services/api";
+import { api, BASE_URL } from "../services/api";
 
 import AdminPage from "./AdminPage";
 import HomePage from "./HomePage";
@@ -30,7 +30,76 @@ import TripsPage from "./TripsPage";
 import UnitsPage from "./UnitsPage";
 import ViaticsPage from "./ViaticsPage";
 
-type TabType = "Inicio" | "Viajes" | "Viáticos" | "Perfil" | "Unidades" | "Usuarios";
+type TabType = "Inicio" | "Viajes" | "Gastos" | "Perfil" | "Unidades" | "Usuarios";
+
+const API_ORIGIN = BASE_URL.replace(/\/api\/?$/, "");
+
+const resolvePhotoUrl = (photoUrl?: string | null) => {
+  if (!photoUrl) return null;
+  const clean = String(photoUrl).split("?")[0].trim();
+  if (!clean) return null;
+  if (
+    clean.startsWith("http") ||
+    clean.startsWith("file:") ||
+    clean.startsWith("blob:") ||
+    clean.startsWith("data:")
+  ) {
+    return clean;
+  }
+  return `${API_ORIGIN}${clean.startsWith("/") ? "" : "/"}${clean}`;
+};
+
+function UserAvatar({
+  uri,
+  initials,
+  size = 40,
+}: {
+  uri?: string | null;
+  initials: string;
+  size?: number;
+}) {
+  const [failed, setFailed] = useState(false);
+  const showImage = Boolean(uri) && !failed;
+
+  useEffect(() => {
+    setFailed(false);
+  }, [uri]);
+
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: "#111111",
+        borderWidth: 2,
+        borderColor: "#e5e7eb",
+        overflow: "hidden",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      {showImage ? (
+        <Image
+          source={{ uri: uri as string }}
+          style={{ width: size, height: size }}
+          resizeMode="cover"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <Text
+          style={{
+            color: "#ffffff",
+            fontWeight: "800",
+            fontSize: Math.round(size * 0.34),
+          }}
+        >
+          {initials}
+        </Text>
+      )}
+    </View>
+  );
+}
 
 export default function Dashboard() {
   const { currentUser, setCurrentUser, logout, isHydrated } = useStore();
@@ -134,6 +203,9 @@ export default function Dashboard() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   const isAdmin = currentUser?.rol?.toLowerCase() === "admin";
+  const resolvedPhotoUrl = resolvePhotoUrl(currentUser?.photoUrl);
+  const userInitials = `${currentUser?.nombre?.[0] || "U"}${currentUser?.apellido?.[0] || ""}`.toUpperCase();
+  const userFullName = [currentUser?.nombre, currentUser?.apellido].filter(Boolean).join(" ");
   const {
     unreadCount,
     items: notifications,
@@ -172,7 +244,7 @@ export default function Dashboard() {
   }, [currentUser, tab, isAdmin]);
 
   useEffect(() => {
-    if (currentUser && !isAdmin && tab === "Viáticos") {
+    if (currentUser && !isAdmin && tab === "Gastos") {
       setTab("Inicio");
     }
   }, [currentUser, isAdmin, tab]);
@@ -205,7 +277,7 @@ export default function Dashboard() {
         return <HomePage currentUser={currentUser} />;
       case "Viajes":
         return <TripsPage />;
-      case "Viáticos":
+      case "Gastos":
         return isAdmin ? <ViaticsPage /> : null;
       case "Perfil":
         return <PerfilePage currentUser={currentUser} setCurrentUser={setCurrentUser} />;
@@ -222,15 +294,15 @@ export default function Dashboard() {
   const pageOwnsScroll =
     tab === "Viajes" ||
     tab === "Unidades" ||
-    tab === "Viáticos" ||
+    tab === "Gastos" ||
     tab === "Inicio" ||
     tab === "Perfil";
 
-  // Prioridad 4: Reordenar menú por frecuencia de uso (Inicio > Viajes > Viáticos > Perfil)
+  // Prioridad 4: Reordenar menú por frecuencia de uso (Inicio > Viajes > Gastos > Perfil)
   const menuItems: TabType[] = [
     "Inicio",
     "Viajes",
-    ...(isAdmin ? (["Viáticos"] as TabType[]) : []),
+    ...(isAdmin ? (["Gastos"] as TabType[]) : []),
     "Perfil",
     ...(isAdmin ? (["Unidades", "Usuarios"] as TabType[]) : []),
   ];
@@ -239,7 +311,7 @@ export default function Dashboard() {
     switch (item) {
       case "Inicio": return "home";
       case "Viajes": return "route";
-      case "Viáticos": return "wallet";
+      case "Gastos": return "wallet";
       case "Perfil": return "user";
       case "Unidades": return "truck";
       case "Usuarios": return "users";
@@ -252,7 +324,7 @@ export default function Dashboard() {
     switch (item) {
       case "Inicio": return "Ir al panel principal";
       case "Viajes": return `Ver rutas (${viajesActivos} activas)`;
-      case "Viáticos": return `Control de gastos (${viaticesPendientes} pendientes)`;
+      case "Gastos": return `Control de gastos (${viaticesPendientes} pendientes)`;
       case "Perfil": return "Editar tu información personal";
       case "Unidades": return "Administrar flotilla de camiones";
       case "Usuarios": return "Control de personal y accesos";
@@ -420,7 +492,7 @@ export default function Dashboard() {
                     {item === "Viajes" && viajesActivos > 0 && (
                       <Badge style={styles.badgeViajes}>{viajesActivos}</Badge>
                     )}
-                    {item === "Viáticos" && viaticesPendientes > 0 && (
+                    {item === "Gastos" && viaticesPendientes > 0 && (
                       <Badge style={styles.badgeViaticos}>{viaticesPendientes}</Badge>
                     )}
                   </TouchableOpacity>
@@ -462,22 +534,13 @@ export default function Dashboard() {
                 >
                   <View style={styles.headerUserText}>
                     <Text numberOfLines={1} style={styles.headerUserName}>
-                      {currentUser.nombre} {currentUser.apellido}
+                      {userFullName || "Usuario"}
                     </Text>
                     <View style={styles.headerRoleBadge}>
                       <Text style={styles.headerRoleText}>{currentUser.rol || "Usuario"}</Text>
                     </View>
                   </View>
-                  {currentUser.photoUrl ? (
-                    <Avatar.Image size={40} source={{ uri: currentUser.photoUrl }} />
-                  ) : (
-                    <Avatar.Text
-                      size={40}
-                      label={`${currentUser.nombre?.[0] || "U"}${currentUser.apellido?.[0] || ""}`}
-                      style={styles.headerAvatar}
-                      labelStyle={styles.headerAvatarLabel}
-                    />
-                  )}
+                  <UserAvatar uri={resolvedPhotoUrl} initials={userInitials} size={40} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -504,20 +567,19 @@ export default function Dashboard() {
             <View style={styles.mobileHeaderActions}>
               {renderNotificationBell(true)}
               <TouchableOpacity
-                style={styles.mobileHeaderUser}
+                style={styles.mobileHeaderUserChip}
                 onPress={() => { handleTabPress("Perfil"); if (menuVisible) closeMobileMenu(); }}
                 activeOpacity={0.85}
               >
-                {currentUser.photoUrl ? (
-                  <Avatar.Image size={34} source={{ uri: currentUser.photoUrl }} />
-                ) : (
-                  <Avatar.Text
-                    size={34}
-                    label={`${currentUser.nombre?.[0] || "U"}${currentUser.apellido?.[0] || ""}`}
-                    style={styles.headerAvatar}
-                    labelStyle={styles.headerAvatarLabel}
-                  />
-                )}
+                <View style={styles.mobileHeaderUserText}>
+                  <Text numberOfLines={1} style={styles.mobileHeaderUserName}>
+                    {userFullName || "Usuario"}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.mobileHeaderUserRole}>
+                    {currentUser.rol || "Usuario"}
+                  </Text>
+                </View>
+                <UserAvatar uri={resolvedPhotoUrl} initials={userInitials} size={34} />
               </TouchableOpacity>
             </View>
           </Appbar.Header>
@@ -617,7 +679,7 @@ export default function Dashboard() {
                             {item === "Viajes" && viajesActivos > 0 && (
                               <Badge style={styles.badgeViajesMobile}>{viajesActivos}</Badge>
                             )}
-                            {item === "Viáticos" && viaticesPendientes > 0 && (
+                            {item === "Gastos" && viaticesPendientes > 0 && (
                               <Badge style={styles.badgeViaticosMobile}>{viaticesPendientes}</Badge>
                             )}
                           </TouchableOpacity>
@@ -1021,6 +1083,34 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
     marginRight: 4,
+  },
+  mobileHeaderUserChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 4,
+    paddingLeft: 10,
+    paddingRight: 4,
+    backgroundColor: "#f8fafc",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    maxWidth: 168,
+  },
+  mobileHeaderUserText: {
+    flexShrink: 1,
+    alignItems: "flex-end",
+    minWidth: 0,
+  },
+  mobileHeaderUserName: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111111",
+  },
+  mobileHeaderUserRole: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#6b7280",
   },
   mobileHeaderUser: {
     width: 40,

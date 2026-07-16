@@ -3,7 +3,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import * as Notifications from "expo-notifications";
 import React from "react";
 import { Platform, TouchableWithoutFeedback } from 'react-native';
-import { Provider as PaperProvider } from "react-native-paper";
+import { MD3LightTheme, Provider as PaperProvider } from "react-native-paper";
 import { StoreProvider, useStore } from "./context/Store";
 import useAutoLogout from "./hooks/useAutoLogout";
 
@@ -18,6 +18,21 @@ import ResetPassword from "./app/ResetPassword";
 import TripsPage from "./app/TripsPage";
 import UnitsPage from "./app/UnitsPage";
 import ViaticsPage from "./app/ViaticsPage";
+
+const voltaTheme = {
+  ...MD3LightTheme,
+  colors: {
+    ...MD3LightTheme.colors,
+    primary: "#111111",
+    secondary: "#111111",
+    tertiary: "#374151",
+    primaryContainer: "#e5e7eb",
+    secondaryContainer: "#e5e7eb",
+    onPrimary: "#ffffff",
+    onSecondary: "#ffffff",
+    onPrimaryContainer: "#111111",
+  },
+};
 
 //configuracion de notificaciones  
 // Esto le dice a la App cómo debe comportarse cuando llegue una notificación
@@ -82,7 +97,7 @@ const Stack = createNativeStackNavigator();
 export default function App() {
   return (
     <StoreProvider>
-      <PaperProvider>
+      <PaperProvider theme={voltaTheme}>
         <AppNavigator />
       </PaperProvider>
     </StoreProvider>

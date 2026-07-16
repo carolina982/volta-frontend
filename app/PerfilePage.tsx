@@ -56,6 +56,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
   const [email, setEmail] = useState(currentUser?.email ?? "");
   const [contacto, setContacto] = useState(currentUser?.contacto ?? "");
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoFailed, setPhotoFailed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [formMessage, setFormMessage] = useState("");
 
@@ -73,6 +74,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     setApellido(currentUser.apellido || "");
     setEmail(currentUser.email || "");
     setPhotoUri(resolvePhotoUrl(currentUser.photoUrl));
+    setPhotoFailed(false);
   }, [currentUser]);
 
   const notify = (title: string, message: string) => {
@@ -178,6 +180,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
       const data = res.data || {};
       if (data.photoUrl) {
         setPhotoUri(`${resolvePhotoUrl(data.photoUrl)}?t=${Date.now()}`);
+        setPhotoFailed(false);
       }
 
       if (setCurrentUser) {
@@ -226,6 +229,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
 
       if (!result.canceled && result.assets?.[0]?.uri) {
         setPhotoUri(result.assets[0].uri);
+        setPhotoFailed(false);
         setFormMessage("");
       }
     } catch (error) {
@@ -239,8 +243,8 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     underlineColor: "transparent",
     activeUnderlineColor: "transparent",
     dense: true,
-    contentStyle: [styles.inputContent, fieldsLocked && styles.inputContentLocked],
-    style: [styles.input, fieldsLocked && styles.inputLocked],
+    contentStyle: styles.inputContent,
+    style: styles.input,
     placeholderTextColor: "#9ca3af",
     editable: !fieldsLocked,
   };
@@ -284,7 +288,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
               <Text style={[styles.title, isMobile && styles.titleMobile]}>Mi Perfil</Text>
               <Text style={styles.subtitle}>
                 {fieldsLocked
-                  ? "Puedes cambiar tu foto de perfil"
+                  ? "Tu foto de perfil y datos de cuenta"
                   : "Actualiza tu información personal"}
               </Text>
             </View>
@@ -294,15 +298,6 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
             </View>
           </View>
 
-          {fieldsLocked ? (
-            <View style={styles.lockBanner}>
-              <FontAwesome5 name="lock" size={12} color="#64748b" />
-              <Text style={styles.lockBannerText}>
-                Tus datos están bloqueados. Solo puedes cambiar la foto y guardar.
-              </Text>
-            </View>
-          ) : null}
-
           <View
             style={[
               styles.profilePanel,
@@ -311,13 +306,24 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
             ]}
           >
             <View style={[styles.avatarSection, isMobile && styles.avatarSectionMobile]}>
-              {photoUri ? (
-                <Image source={{ uri: photoUri }} style={styles.avatarImage} />
+              {photoUri && !photoFailed ? (
+                <Image
+                  source={{ uri: photoUri }}
+                  style={styles.avatarImage}
+                  onError={() => setPhotoFailed(true)}
+                />
               ) : (
                 <View style={styles.avatarPlaceholder}>
                   <Text style={styles.avatarText}>{getInitials()}</Text>
                 </View>
               )}
+              <Text style={styles.profileName} numberOfLines={2}>
+                {[nombre, apellido].filter(Boolean).join(" ") || "Usuario"}
+              </Text>
+              <View style={styles.profileRolePill}>
+                <FontAwesome5 name={roleIcon} size={10} color="#111111" />
+                <Text style={styles.profileRolePillText}>{displayRole}</Text>
+              </View>
               <TouchableOpacity
                 style={styles.changePhotoButton}
                 onPress={pickerImage}
@@ -331,6 +337,11 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                   ? "JPG o PNG · se guarda al pulsar Guardar"
                   : "Si pide permiso, elige Permitir · luego Guardar"}
               </Text>
+              {fieldsLocked ? (
+                <Text style={styles.photoHintLocked}>
+                  Nombre, correo y contacto solo los cambia un administrador.
+                </Text>
+              ) : null}
             </View>
 
             <View style={[styles.formSection, isLargeScreen && styles.formSectionDesktop]}>
@@ -465,25 +476,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   roleBadgeText: { color: "#ffffff", fontWeight: "700", fontSize: 12 },
-  lockBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 12,
-  },
-  lockBannerText: {
-    flex: 1,
-    fontSize: 12,
-    color: "#64748b",
-    fontWeight: "600",
-    lineHeight: 17,
-  },
   profilePanel: {
     backgroundColor: "#ffffff",
     borderRadius: 14,
@@ -516,24 +508,53 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   avatarImage: {
-    width: 108,
-    height: 108,
-    borderRadius: 54,
-    borderWidth: 2,
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    borderWidth: 3,
     borderColor: "#e5e7eb",
-    marginBottom: 14,
-    backgroundColor: "#f3f4f6",
+    marginBottom: 12,
+    backgroundColor: "#111111",
+    overflow: "hidden",
   },
   avatarPlaceholder: {
-    width: 108,
-    height: 108,
-    borderRadius: 54,
+    width: 112,
+    height: 112,
+    borderRadius: 56,
     backgroundColor: "#111111",
     alignItems: "center",
     justifyContent: "center",
+    marginBottom: 12,
+    borderWidth: 3,
+    borderColor: "#e5e7eb",
+  },
+  avatarText: { color: "#ffffff", fontWeight: "800", fontSize: 34 },
+  profileName: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#111111",
+    textAlign: "center",
+    letterSpacing: 0.2,
+    marginBottom: 8,
+    maxWidth: 280,
+  },
+  profileRolePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#f3f4f6",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
     marginBottom: 14,
   },
-  avatarText: { color: "#ffffff", fontWeight: "800", fontSize: 32 },
+  profileRolePillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111111",
+  },
   changePhotoButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -552,6 +573,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#9ca3af",
     fontWeight: "600",
+    textAlign: "center",
+  },
+  photoHintLocked: {
+    marginTop: 6,
+    fontSize: 11,
+    color: "#94a3b8",
+    fontWeight: "600",
+    textAlign: "center",
+    maxWidth: 260,
+    lineHeight: 16,
   },
   formSection: { flex: 1, width: "100%" },
   formSectionDesktop: { paddingTop: 8 },
@@ -576,12 +607,7 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
     marginBottom: 0,
   },
-  inputLocked: {
-    backgroundColor: "#f1f5f9",
-    borderColor: "#e2e8f0",
-  },
   inputContent: { color: "#111111", fontWeight: "600", fontSize: 14 },
-  inputContentLocked: { color: "#64748b" },
   roleReadonly: {
     flexDirection: "row",
     alignItems: "center",

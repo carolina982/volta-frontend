@@ -8,14 +8,20 @@ import * as XLSX from "xlsx";
 import { useStore } from "../context/Store";
 import { api } from "../services/api";
 
-type SelectOption = { label: string; value: string };
-type SelectSheetState = {
-  title: string;
-  value: string;
-  options: SelectOption[];
-  placeholder: string;
-  onChange: (value: string) => void;
-};
+const START_TRIP_CHECKLIST = [
+  { id: "docs", label: "Documentos, licencia y permiso en regla" },
+  { id: "unit", label: "Unidad revisada (luces, llantas, combustible)" },
+  { id: "route", label: "Ruta y destino confirmados" },
+  { id: "safety", label: "Equipo de seguridad / kit listo" },
+] as const;
+
+type ChecklistId = (typeof START_TRIP_CHECKLIST)[number]["id"];
+
+const emptyChecklistState = (): Record<ChecklistId, boolean> =>
+  START_TRIP_CHECKLIST.reduce(
+    (acc, item) => ({ ...acc, [item.id]: false }),
+    {} as Record<ChecklistId, boolean>
+  );
 
 interface KilometrajeRegistro {
   km: string;
@@ -89,6 +95,14 @@ const formatDateDisplay = (d: Date) =>
 
 const formatTimeDisplay = (d: Date) =>
   `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+
+/** Convierte ISO → { date, time } para los inputs del formulario. */
+function isoToFormDateTime(iso?: string | null): { date: string; time: string } {
+  if (!iso) return { date: "", time: "" };
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return { date: "", time: "" };
+  return { date: formatDateDisplay(d), time: formatTimeDisplay(d) };
+}
 
 const combineDateTime = (dateStr: string, timeStr: string): Date | null => {
   if (!dateStr?.trim()) return null;
@@ -390,23 +404,27 @@ const buildTiempoTrayecto = (
   }
   return {
     value: formatDuration(diff),
-    hint: "Tiempo total del trayecto",
+    hint: "Tiempo estimado de llegada",
     live: false,
   };
 };
 
 const toId = (value: any) => {
   if (!value) return "";
-  if (typeof value === "object") return String(value._id || "");
+  if (typeof value === "object") {
+    if (value._id) return String(value._id);
+    if (typeof value.toString === "function" && value.toString !== Object.prototype.toString) {
+      const asStr = value.toString();
+      if (asStr && asStr !== "[object Object]") return asStr;
+    }
+    return "";
+  }
   return String(value);
 };
 
-const mapDestinoExtraFromTrip = (
-  item: DestinoExtraTrip,
-  applyDateTime: (iso?: string) => { date: string; time: string }
-): DestinoExtraForm => {
-  const multiSalida = applyDateTime(item.fechaSalida);
-  const multiLlegada = applyDateTime(item.fechaLlegada);
+const mapDestinoExtraFromTrip = (item: DestinoExtraTrip): DestinoExtraForm => {
+  const multiSalida = isoToFormDateTime(item.fechaSalida);
+  const multiLlegada = isoToFormDateTime(item.fechaLlegada);
   return {
     fechaSalida: multiSalida.date,
     horaSalida: multiSalida.time,
@@ -480,6 +498,8 @@ export default function TripsPage() {
   const [exportType, setExportType] = useState("semana");
   const [selectedWeekStart, setSelectedWeekStart] = useState(() => getWeekStartMonday());
   const [weekSheetVisible, setWeekSheetVisible] = useState(false);
+  const [checklistTrip, setChecklistTrip] = useState<Trip | null>(null);
+  const [checklistChecked, setChecklistChecked] = useState<Record<ChecklistId, boolean>>(emptyChecklistState);
   const [llegadaTouched, setLlegadaTouched] = useState(false);
   const [adminShowForm, setAdminShowForm] = useState(true);
   const [showLlegadaPicker, setShowLlegadaPicker] = useState(false);
@@ -504,21 +524,32 @@ export default function TripsPage() {
   const [multiLiveTick, setMultiLiveTick] = useState(0);
   const [selectSheet, setSelectSheet] = useState<SelectSheetState | null>(null);
 
-  const isAdmin = currentUser?.rol?.toLowerCase() === "admin";
-  const roleKey = (currentUser?.rol || "").toLowerCase();
+  const isAdmin = currentUser?.rol?.toLowerCase().trim() === "admin";
+  const roleKey = (currentUser?.rol || "").toLowerCase().trim();
   const isAyudante = roleKey === "ayudante general" || roleKey === "ayudante";
+  const isOperadorRole = roleKey === "operador" || roleKey === "chofer";
   const isOperador = !isAdmin;
-  const myUserId = String(currentUser?._id || (currentUser as any)?.id || "");
+  const myUserId = String(currentUser?._id || (currentUser as any)?.id || "").trim();
 
-  const isTripAssignedToMe = useCallback((t: any) => {
-    if (!myUserId) return false;
-    if (toId(t.conductorId) === myUserId || toId(t.acompanante) === myUserId) return true;
-    const extras = Array.isArray(t.destinoExtra) ? t.destinoExtra : [];
-    return extras.some(
-      (extra: any) =>
-        toId(extra?.conductorId) === myUserId || toId(extra?.acompanante) === myUserId
-    );
-  }, [myUserId]);
+  /** Operador: solo viajes donde es conductor. Ayudante: donde es acompañante (o conductor). */
+  const isTripAssignedToMe = useCallback(
+    (t: any) => {
+      if (!myUserId) return false;
+      const asConductor =
+        toId(t.conductorId) === myUserId ||
+        (Array.isArray(t.destinoExtra) &&
+          t.destinoExtra.some((extra: any) => toId(extra?.conductorId) === myUserId));
+      const asCompanion =
+        toId(t.acompanante) === myUserId ||
+        (Array.isArray(t.destinoExtra) &&
+          t.destinoExtra.some((extra: any) => toId(extra?.acompanante) === myUserId));
+
+      if (isOperadorRole) return asConductor;
+      if (isAyudante) return asCompanion || asConductor;
+      return asConductor || asCompanion;
+    },
+    [myUserId, isOperadorRole, isAyudante]
+  );
 
   const isCompanionOnTrip = useCallback((t: any) => {
     if (!myUserId) return false;
@@ -608,6 +639,8 @@ export default function TripsPage() {
 
   const closeModal = useCallback(() => {
     setSelectSheet(null);
+    setChecklistTrip(null);
+    setChecklistChecked(emptyChecklistState());
     setModalVisible(false);
   }, []);
 
@@ -671,13 +704,6 @@ export default function TripsPage() {
   }, []);
 
  const openModal = useCallback((trip?: Trip, opts?: { asRepeat?: boolean }) => {
-    const applyDateTime = (iso?: string) => {
-      if (!iso) return { date: "", time: "" };
-      const d = new Date(iso);
-      if (Number.isNaN(d.getTime())) return { date: "", time: "" };
-      return { date: formatDateDisplay(d), time: formatTimeDisplay(d) };
-    };
-
     const fillUnit = (unidadIdValue: string) => {
       const unitFromTrip = units.find((u) => u.id === unidadIdValue) || null;
       setSelectedUnit(unitFromTrip);
@@ -729,11 +755,11 @@ export default function TripsPage() {
       fillUnit(trip.unidadId || "");
       setConductorId(toId(trip.conductorId));
 
-      const salida = applyDateTime(trip.fechaSalida);
+      const salida = isoToFormDateTime(trip.fechaSalida);
       setFechaSalida(salida.date);
       setHoraSalida(salida.time);
 
-      const llegada = applyDateTime(trip.fechaLlegada);
+      const llegada = isoToFormDateTime(trip.fechaLlegada);
       setFechaLlegada(llegada.date);
       setHoraLlegada(llegada.time);
 
@@ -753,9 +779,7 @@ export default function TripsPage() {
       const hasMulti = Boolean(trip.multidestino && extrasList.length > 0);
       setMultidestino(hasMulti);
       setDestinosExtras(
-        hasMulti
-          ? extrasList.map((item) => mapDestinoExtraFromTrip(item, applyDateTime))
-          : []
+        hasMulti ? extrasList.map((item) => mapDestinoExtraFromTrip(item)) : []
       );
     } else {
       setEditingTrip(null);
@@ -1075,85 +1099,101 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
       fechaLlegada: item.fechaLlegada || null,
     }));
 
-  const patchTripForOperador = async (trip: Trip, payload: Record<string, any>, successMessage: string) => {
+  /** Actualiza viaje desde operador. Sin helpers de fechas (compat. Hermes/móvil). */
+  const updateTripAsOperador = async (
+    trip: Trip,
+    payload: Record<string, any>,
+    successMessage: string
+  ) => {
+    const tripId = String(trip.id || (trip as any)._id || "").trim();
+    if (!tripId) {
+      notify("Error", "No se encontró el ID del viaje.");
+      return;
+    }
+
+    console.log("[OP_START_V3] updateTripAsOperador", tripId, payload?.estado);
+
+    const attempts: Array<{ label: string; run: () => Promise<any> }> = [
+      {
+        label: "PUT /trips/:id (estado)",
+        run: () => api.put(`/trips/${tripId}`, { estado: payload.estado }, { timeout: 45000 }),
+      },
+      {
+        label: "PUT /trips/:id/operador",
+        run: () => api.put(`/trips/${tripId}/operador`, payload, { timeout: 45000 }),
+      },
+      {
+        label: "PATCH /trips/:id/operador",
+        run: () => api.patch(`/trips/${tripId}/operador`, payload, { timeout: 45000 }),
+      },
+      {
+        label: "PUT /trips/:id (payload)",
+        run: () => api.put(`/trips/${tripId}`, payload, { timeout: 45000 }),
+      },
+    ];
+
+    setSaving(true);
+    let lastError: any = null;
     try {
-      setSaving(true);
-      const res = await api.put(`/trips/${trip.id}`, payload);
-      Alert.alert("Éxito", successMessage);
-      await loadTrips();
-      if (editingTrip?.id === trip.id) {
-        const updated = res?.data?.trip || res?.data;
-        if (updated && (updated._id || updated.id || updated.rutaAcubrir)) {
-          setEditingTrip({
-            ...trip,
-            ...updated,
-            id: updated._id || updated.id || trip.id,
-          });
-          if (payload.fechaLlegada) {
-            const llegada = applyDateTime(payload.fechaLlegada);
-            setFechaLlegada(llegada.date);
-            setHoraLlegada(llegada.time);
-            setLlegadaTouched(true);
-          }
-          if (payload.fechaSalida) {
-            const salida = applyDateTime(payload.fechaSalida);
-            setFechaSalida(salida.date);
-            setHoraSalida(salida.time);
-          }
-        } else {
+      for (const attempt of attempts) {
+        try {
+          await attempt.run();
+          notify("Éxito", successMessage);
+          if (payload.estado) setEstado(String(payload.estado));
           setEditingTrip((prev) =>
-            prev
+            prev && String(prev.id) === tripId
               ? {
                   ...prev,
-                  ...payload,
                   estado: payload.estado ?? prev.estado,
-                  destinoActualIndex: payload.destinoActualIndex ?? prev.destinoActualIndex,
-                  fechaSalida: payload.fechaSalida ?? prev.fechaSalida,
-                  fechaLlegada: payload.fechaLlegada ?? prev.fechaLlegada,
+                  destinoActualIndex:
+                    payload.destinoActualIndex ?? prev.destinoActualIndex,
                 }
               : prev
           );
+          // Recarga en background: no debe tumbar el éxito en móvil
+          void loadTrips().catch((e) => console.warn("[OP_START_V3] loadTrips:", e));
+          return;
+        } catch (err: any) {
+          lastError = err;
+          const status = err?.response?.status;
+          console.warn(`[OP_START_V3] falló ${attempt.label}:`, status, err?.response?.data || err?.message);
+          if (status === 401 || status === 403) break;
         }
       }
-    } catch (error: any) {
-      console.error("Error actualizando viaje (operador):", error?.response?.data || error);
-      Alert.alert("Error", "No se pudo actualizar el viaje.");
+
+      console.error("[OP_START_V3] Error actualizando viaje:", lastError?.response?.data || lastError);
+      const status = lastError?.response?.status;
+      const detail = formatApiError(lastError, "No se pudo actualizar el viaje.");
+      notify("Error", status ? `(${status}) ${detail}` : detail);
     } finally {
       setSaving(false);
     }
   };
 
   const iniciarViaje = async (trip: Trip) => {
+    console.log("[OP_START_V3] iniciarViaje", trip?.id, trip?.estado);
     const estado = getTripEstadoKey(trip.estado);
     if (estado !== "pendiente" && estado !== "en parada") {
-      Alert.alert("No disponible", "Este viaje no se puede iniciar en su estado actual.");
+      notify("No disponible", "Este viaje no se puede iniciar en su estado actual.");
       return;
     }
 
     const now = new Date().toISOString();
-    const index = trip.destinoActualIndex ?? 0;
+    const index = Number(trip.destinoActualIndex ?? 0) || 0;
     const extras = normalizeDestinosExtrasList(trip.destinoExtra).map((item) => ({ ...item }));
 
     if (estado === "pendiente" || index <= 0) {
-      await patchTripForOperador(
-        trip,
-        {
-          estado: "en progreso",
-          destinoActualIndex: 0,
-          fechaSalida: now,
-        },
-        "Viaje iniciado"
-      );
+      await updateTripAsOperador(trip, { estado: "en progreso" }, "Viaje iniciado");
       return;
     }
 
     extras[index - 1] = {
       ...extras[index - 1],
-      fechaSalida: now,
+      fechaSalida: extras[index - 1]?.fechaSalida || now,
       fechaLlegada: extras[index - 1]?.fechaLlegada || undefined,
     };
 
-    await patchTripForOperador(
+    await updateTripAsOperador(
       trip,
       {
         estado: "en progreso",
@@ -1172,7 +1212,6 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
       return;
     }
 
-    const now = new Date().toISOString();
     const index = trip.destinoActualIndex ?? 0;
     const extras = normalizeDestinosExtrasList(trip.destinoExtra).map((item) => ({ ...item }));
     const total = getTotalDestinosCount(trip);
@@ -1187,24 +1226,18 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
     }
 
     if (index <= 0) {
-      await patchTripForOperador(
+      await updateTripAsOperador(
         trip,
         {
-          fechaLlegada: now,
           estado: "en parada",
           destinoActualIndex: 1,
         },
-        "Parada finalizada. Llegada registrada automáticamente."
+        "Parada finalizada."
       );
       return;
     }
 
-    extras[index - 1] = {
-      ...extras[index - 1],
-      fechaLlegada: now,
-    };
-
-    await patchTripForOperador(
+    await updateTripAsOperador(
       trip,
       {
         estado: "en parada",
@@ -1212,7 +1245,7 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
         multidestino: true,
         destinoExtra: buildDestinoExtraPayload(extras),
       },
-      "Parada finalizada. Llegada registrada automáticamente."
+      "Parada finalizada."
     );
   };
 
@@ -1223,54 +1256,28 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
       return;
     }
 
-    const now = new Date().toISOString();
     const index = trip.destinoActualIndex ?? 0;
-    const extras = normalizeDestinosExtrasList(trip.destinoExtra).map((item) => ({ ...item }));
 
-    // Destino principal (índice 0): fecha/hora de llegada = momento exacto de finalizar
-    if (index <= 0) {
-      await patchTripForOperador(
-        trip,
-        {
-          fechaLlegada: now,
-          estado: "completado",
-          destinoActualIndex: index,
-        },
-        "Viaje finalizado. Fecha y hora de llegada registradas automáticamente."
-      );
-      return;
-    }
-
-    // Destino adicional actual: llegada automática al finalizar
-    extras[index - 1] = {
-      ...extras[index - 1],
-      fechaLlegada: now,
-      fechaSalida: extras[index - 1]?.fechaSalida || now,
-    };
-
-    await patchTripForOperador(
+    // Solo cambia estado. Fecha/hora de llegada las captura quien edita el viaje (no el operador).
+    await updateTripAsOperador(
       trip,
       {
-        // Si el destino 1 aún no tenía llegada, también la cierra ahora
-        fechaLlegada: trip.fechaLlegada || now,
         estado: "completado",
         destinoActualIndex: index,
         multidestino: Boolean(trip.multidestino),
-        destinoExtra: buildDestinoExtraPayload(extras),
       },
-      "Viaje finalizado. Fecha y hora de llegada registradas automáticamente."
+      "Viaje finalizado."
     );
   };
 
 const saveTrip = async () => {
+  // La llegada es solo tiempo estimado: NUNCA marca el viaje como completado.
+  // Completado solo lo pone el operador al finalizar, o un admin editando un viaje ya en curso.
+  const estadoActual = editingTrip ? getTripEstadoKey(editingTrip.estado) : "pendiente";
   const estadoCalculado =
-    editingTrip &&
-    getTripEstadoKey(editingTrip.estado) !== "pendiente" &&
-    getTripEstadoKey(editingTrip.estado) !== "completado"
-      ? editingTrip.estado
-      : llegadaDateTime
-        ? "completado"
-        : editingTrip?.estado || "pendiente";
+    estadoActual === "en progreso" || estadoActual === "en parada" || estadoActual === "completado"
+      ? editingTrip!.estado
+      : "pendiente";
 
   if (isAdmin && (!rutaAcubrir.trim() || !unidadId || !conductorId || !destino.trim())) {
     notify(
@@ -1351,14 +1358,13 @@ const saveTrip = async () => {
     return;
   }
 
-  // Llegada NO es obligatoria al crear: queda null hasta que el operador finalice
-  // (o hasta que un admin la capture manualmente).
+  // Llegada manual (opcional): no se llena al finalizar el viaje.
   if (llegadaDateTime) {
     payload.fechaLlegada = llegadaDateTime.toISOString();
   } else if (!editingTrip) {
     payload.fechaLlegada = null;
   } else if (llegadaTouched) {
-    // Admin limpió la llegada a propósito
+    // Se limpió la llegada a propósito
     payload.fechaLlegada = null;
   }
   // Si edita sin tocar llegada vacía, no enviamos el campo y el backend conserva el valor
@@ -1533,6 +1539,150 @@ const deleteTrip = async (id: string) => {
     return { badge: styles.estadoPendiente, text: styles.estadoTextPendiente, icon: "clock" as const, iconColor: "#d97706" };
   };
 
+  const openStartChecklist = (trip: Trip) => {
+    setChecklistTrip(trip);
+    setChecklistChecked(emptyChecklistState());
+  };
+
+  const closeStartChecklist = () => {
+    setChecklistTrip(null);
+    setChecklistChecked(emptyChecklistState());
+  };
+
+  const toggleChecklistItem = (id: ChecklistId) => {
+    setChecklistChecked((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const checklistAllDone = START_TRIP_CHECKLIST.every((item) => checklistChecked[item.id]);
+
+  const confirmStartFromChecklist = async () => {
+    if (!checklistTrip) return;
+    if (!checklistAllDone) {
+      notify("Checklist incompleto", "Marca todos los puntos antes de iniciar el viaje.");
+      return;
+    }
+    console.log("[OP_START_V3] checklist confirm", checklistTrip.id);
+    const tripToStart = checklistTrip;
+    closeStartChecklist();
+    await iniciarViaje(tripToStart);
+  };
+
+  /** UI del checklist (sin Modal propio). En móvil se embebe sobre el detalle del viaje. */
+  const renderChecklistOverlay = (embedded = false) => {
+    if (!checklistTrip) return null;
+
+    const card = (
+      <View
+        style={[styles.checklistCard, isNarrowList && styles.checklistCardMobile]}
+        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+      >
+        <View style={styles.checklistHeader}>
+          <View style={styles.checklistIconBadge}>
+            <FontAwesome5 name="clipboard-check" size={16} color="#ffffff" />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.checklistTitle}>Checklist antes de iniciar</Text>
+            <Text style={styles.checklistSubtitle} numberOfLines={2}>
+              {checklistTrip.rutaAcubrir} → {checklistTrip.destino}
+            </Text>
+          </View>
+          <Pressable style={styles.checklistClose} onPress={closeStartChecklist}>
+            <FontAwesome5 name="times" size={13} color="#6b7280" />
+          </Pressable>
+        </View>
+
+        <Text style={styles.checklistIntro}>
+          Confirma que todo va en orden. Debes marcar todos los puntos para continuar.
+        </Text>
+
+        <View style={styles.checklistList}>
+          {START_TRIP_CHECKLIST.map((item) => {
+            const active = checklistChecked[item.id];
+            return (
+              <Pressable
+                key={item.id}
+                style={({ pressed }) => [
+                  styles.checklistRow,
+                  active && styles.checklistRowActive,
+                  pressed && styles.checklistRowPressed,
+                ]}
+                onPress={() => toggleChecklistItem(item.id)}
+              >
+                <View style={[styles.checklistBox, active && styles.checklistBoxActive]}>
+                  {active ? <FontAwesome5 name="check" size={11} color="#ffffff" /> : null}
+                </View>
+                <Text style={[styles.checklistLabel, active && styles.checklistLabelActive]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <View style={styles.checklistActions}>
+          <TouchableOpacity
+            style={styles.checklistCancelBtn}
+            onPress={closeStartChecklist}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.checklistCancelText}>Cancelar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.checklistConfirmBtn,
+              (!checklistAllDone || saving) && styles.checklistConfirmBtnDisabled,
+            ]}
+            onPress={() => {
+              void confirmStartFromChecklist();
+            }}
+            disabled={!checklistAllDone || saving}
+            activeOpacity={0.85}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <>
+                <FontAwesome5 name="play" size={13} color="#ffffff" />
+                <Text style={styles.checklistConfirmText}>Iniciar viaje</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+
+    return (
+      <View
+        style={[
+          styles.checklistOverlay,
+          embedded ? styles.checklistOverlayEmbedded : null,
+          Platform.OS === "web" ? styles.checklistOverlayWeb : null,
+        ]}
+        pointerEvents="box-none"
+      >
+        <Pressable style={styles.checklistBackdrop} onPress={closeStartChecklist} />
+        {card}
+      </View>
+    );
+  };
+
+  const renderStartChecklistModal = () => {
+    if (!checklistTrip) return null;
+
+    // iOS: no abrir un segundo Modal si el detalle del viaje ya está abierto
+    if (Platform.OS !== "web" && modalVisible) return null;
+
+    if (Platform.OS === "web") {
+      return <Portal>{renderChecklistOverlay(false)}</Portal>;
+    }
+
+    return (
+      <Modal visible transparent animationType="fade" onRequestClose={closeStartChecklist}>
+        {renderChecklistOverlay(false)}
+      </Modal>
+    );
+  };
+
   const renderOperadorActions = (trip: Trip, compact = false) => {
     const liveTrip = trips.find((t) => t.id === trip.id) || trip;
     const estado = getTripEstadoKey(liveTrip.estado);
@@ -1560,7 +1710,7 @@ const deleteTrip = async (id: string) => {
         {canIniciar && (
           <TouchableOpacity
             style={[styles.operadorActionBtn, styles.operadorActionPrimary, styles.operadorActionBtnFixed]}
-            onPress={() => iniciarViaje(liveTrip)}
+            onPress={() => openStartChecklist(liveTrip)}
             disabled={saving}
             activeOpacity={0.85}
           >
@@ -1801,7 +1951,9 @@ const deleteTrip = async (id: string) => {
               <Text style={styles.specValue}>{formatDateTimeLabel(leg.fechaSalida || item.fechaSalida)}</Text>
             </View>
             <View style={styles.specItem}>
-              <Text style={styles.specLabel}>Llegada</Text>
+              <Text style={styles.specLabel}>
+                {getTripEstadoKey(item.estado) === "completado" ? "Llegada" : "Llegada estimada"}
+              </Text>
               <Text style={styles.specValue}>{formatDateTimeLabel(leg.fechaLlegada || item.fechaLlegada)}</Text>
             </View>
             {!asCompanion ? (
@@ -1861,10 +2013,10 @@ const deleteTrip = async (id: string) => {
     );
   };
 
-  const displayedTrips = useMemo(
-    () => trips.filter((t) => isTripInWeek(t, selectedWeekStart)),
-    [trips, selectedWeekStart]
-  );
+  const displayedTrips = useMemo(() => {
+    if (!isAdmin) return trips;
+    return trips.filter((t) => isTripInWeek(t, selectedWeekStart));
+  }, [trips, selectedWeekStart, isAdmin]);
 
   const tripsCountByWeek = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -2413,7 +2565,7 @@ const deleteTrip = async (id: string) => {
       <View style={styles.travelTimeHeader}>
         <View style={styles.travelTimeHeaderLeft}>
           <FontAwesome5 name="stopwatch" size={isCompactModal ? 16 : 14} color={tiempo.live ? "#059669" : "#111111"} />
-          <Text style={styles.travelTimeTitle}>Tiempo de trayecto</Text>
+          <Text style={styles.travelTimeTitle}>Tiempo estimado</Text>
         </View>
         {tiempo.live && <View style={styles.liveDot} />}
       </View>
@@ -2808,7 +2960,7 @@ const deleteTrip = async (id: string) => {
                     </View>
                     <View style={styles.fechaBlock}>
                       {renderDateTimeField(
-                        "Fecha y hora de llegada (opcional)",
+                        "Tiempo estimado de llegada (opcional)",
                         fechaLlegada,
                         horaLlegada,
                         handleFechaLlegadaChange,
@@ -2819,9 +2971,7 @@ const deleteTrip = async (id: string) => {
                         setShowLlegadaTimePicker
                       )}
                       <Text style={styles.fechaAutoHint}>
-                        {llegadaTouched && (fechaLlegada || horaLlegada)
-                          ? "Llegada registrada manualmente (opcional)"
-                          : "No es obligatoria al crear. Se guarda sola cuando el operador finaliza el viaje."}
+                        Solo estimado. El viaje queda pendiente para el operador; no se marca como completado.
                       </Text>
                     </View>
                     {renderTravelTimeCard()}
@@ -2866,7 +3016,7 @@ const deleteTrip = async (id: string) => {
                               )
                           )}
                           {renderDateTimeField(
-                            "Fecha y hora de llegada",
+                            "Llegada estimada (opcional)",
                             extra.fechaLlegada,
                             extra.horaLlegada,
                             (v) => updateDestinoExtraAt(index, { fechaLlegada: v }),
@@ -3096,8 +3246,8 @@ const deleteTrip = async (id: string) => {
           <Text style={styles.subtitle}>
             {isOperador
               ? isAyudante
-                ? "Viajes donde vas asignado como acompañante u operador"
-                : "Destino, unidad, horarios y acciones de tu viaje"
+                ? "Viajes donde vas asignado como acompañante"
+                : "Solo tus viajes asignados como operador"
               : "Rutas, conductores y estado de cada viaje"}
           </Text>
         </View>
@@ -3192,31 +3342,7 @@ const deleteTrip = async (id: string) => {
             </View>
           )}
         </View>
-      ) : (
-        <View style={[styles.toolbarPanel, styles.listFilterPanel]}>
-          <Text style={styles.toolbarLabel}>Semana</Text>
-          <Pressable
-            style={({ pressed }) => [
-              styles.weekSelectTrigger,
-              pressed && styles.weekSelectTriggerPressed,
-            ]}
-            onPress={openWeekSheet}
-          >
-            <View style={styles.weekSelectIconWrap}>
-              <FontAwesome5 name="calendar-week" size={15} color="#111111" />
-            </View>
-            <View style={styles.weekSelectTriggerTextWrap}>
-              <Text style={styles.weekSelectHint}>Lunes a domingo</Text>
-              <Text style={styles.weekSelectValue} numberOfLines={1}>
-                {weekSelectLabel}
-              </Text>
-            </View>
-            <View style={styles.weekSelectChevron}>
-              <FontAwesome5 name="chevron-down" size={11} color="#6b7280" />
-            </View>
-          </Pressable>
-        </View>
-      )}
+      ) : null}
 
       <View style={[styles.listPanel, isNarrowList && styles.listPanelNarrow]}>
         {!loading && !loadError && (
@@ -3225,7 +3351,7 @@ const deleteTrip = async (id: string) => {
               {displayedTrips.length} viaje{displayedTrips.length === 1 ? "" : "s"}
             </Text>
             <Text style={[styles.listHeaderHint, isNarrowList && styles.listHeaderHintMobile]}>
-              {weekLabel}
+              {isAdmin ? weekLabel : "Tus viajes asignados"}
             </Text>
           </View>
         )}
@@ -3271,7 +3397,8 @@ const deleteTrip = async (id: string) => {
       </View>
       </ScrollView>
 
-      {renderWeekSelectSheet()}
+      {isAdmin ? renderWeekSelectSheet() : null}
+      {renderStartChecklistModal()}
 
       {Platform.OS === "web" && modalVisible ? (
         <Portal>
@@ -3292,6 +3419,8 @@ const deleteTrip = async (id: string) => {
         >
           <View style={[styles.modalContainer, isCompactModal && styles.modalContainerTouch]}>
             {renderModalContent()}
+            {/* Checklist sobre el detalle: evita Modal anidado que en iOS queda oculto */}
+            {checklistTrip ? renderChecklistOverlay(true) : null}
           </View>
         </Modal>
       )}
@@ -4465,6 +4594,165 @@ const styles = StyleSheet.create({
     maxWidth: "100%",
     alignSelf: "stretch",
   },
+  checklistOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  checklistOverlayEmbedded: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 2000,
+    elevation: 30,
+  },
+  checklistOverlayWeb: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1200,
+  },
+  checklistBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15, 23, 42, 0.5)",
+  },
+  checklistCard: {
+    width: "100%",
+    maxWidth: 440,
+    backgroundColor: "#ffffff",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 18,
+    gap: 14,
+    zIndex: 1,
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 20px 48px rgba(0,0,0,0.18)" as any }
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.18,
+          shadowRadius: 20,
+          shadowOffset: { width: 0, height: 10 },
+          elevation: 14,
+        }),
+  },
+  checklistCardMobile: {
+    maxWidth: "100%",
+    padding: 16,
+  },
+  checklistHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  checklistIconBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#111111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checklistTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#111111",
+  },
+  checklistSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6b7280",
+  },
+  checklistClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#f3f4f6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checklistIntro: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#64748b",
+    lineHeight: 18,
+  },
+  checklistList: { gap: 8 },
+  checklistRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#fafafa",
+  },
+  checklistRowActive: {
+    borderColor: "#111111",
+    backgroundColor: "#f8fafc",
+  },
+  checklistRowPressed: { opacity: 0.88 },
+  checklistBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: "#d1d5db",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checklistBoxActive: {
+    backgroundColor: "#111111",
+    borderColor: "#111111",
+  },
+  checklistLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+    lineHeight: 19,
+  },
+  checklistLabelActive: {
+    color: "#111111",
+    fontWeight: "700",
+  },
+  checklistActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  checklistCancelBtn: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: "#e5e7eb",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
+  },
+  checklistCancelText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#6b7280",
+  },
+  checklistConfirmBtn: {
+    flex: 1.2,
+    minHeight: 48,
+    borderRadius: 999,
+    backgroundColor: "#111111",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  checklistConfirmBtnDisabled: { opacity: 0.45 },
+  checklistConfirmText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#ffffff",
+  },
   operadorDoneBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -4526,8 +4814,20 @@ const styles = StyleSheet.create({
     display: "flex" as any,
     flexDirection: "column" as any,
   } as any,
-  modalContainer: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)", padding: 16 },
-  modalContainerTouch: { padding: 0, justifyContent: "flex-start", backgroundColor: "#ffffff" },
+  modalContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.5)",
+    padding: 16,
+    position: "relative",
+  },
+  modalContainerTouch: {
+    padding: 0,
+    justifyContent: "flex-start",
+    backgroundColor: "#ffffff",
+    overflow: "hidden",
+  },
   modalSafeArea: {
     flex: 1,
     backgroundColor: "#ffffff",

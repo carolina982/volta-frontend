@@ -125,18 +125,45 @@ export default function AdminPage() {
         const changedFields: Partial<User> = {};
         if (nombreTrim !== initialUserSnapshot.nombre?.trim()) changedFields.nombre = nombreTrim;
         if (apellidoTrim !== initialUserSnapshot.apellido?.trim()) changedFields.apellido = apellidoTrim;
-        if ((email?.trim() || "") !== (initialUserSnapshot.email?.trim() || "")) changedFields.email = email?.trim();
-        if ((contactoTrim || "") !== (initialUserSnapshot.contacto?.trim() || "")) changedFields.contacto = contactoTrim;
+        if ((email?.trim() || "") !== (initialUserSnapshot.email?.trim() || "")) {
+          changedFields.email = email?.trim().toLowerCase() || "";
+        }
+        if ((contactoTrim || "") !== (initialUserSnapshot.contacto?.trim() || "")) {
+          changedFields.contacto = contactoTrim;
+        }
         if (rol !== initialUserSnapshot.rol) changedFields.rol = rol;
-        if (password?.trim()) changedFields.password = password.trim();
+
+        if (password?.trim()) {
+          if (password.trim().length < 6) {
+            setFormMessage("La contraseña debe tener al menos 6 caracteres.");
+            setSaving(false);
+            return;
+          }
+          const emailForLogin = (email?.trim() || initialUserSnapshot.email?.trim() || "").toLowerCase();
+          if (!emailForLogin) {
+            setFormMessage("Asigna un correo al usuario para que pueda iniciar sesión con la nueva contraseña.");
+            setSaving(false);
+            return;
+          }
+          changedFields.password = password.trim();
+          if (!changedFields.email && !initialUserSnapshot.email) {
+            changedFields.email = emailForLogin;
+          }
+        }
 
         if (Object.keys(changedFields).length === 0) {
           setFormMessage("No hay cambios para guardar.");
+          setSaving(false);
           return;
         }
 
         await api.patch(`/users/${_id}`, changedFields);
-        notify("Éxito", "Usuario actualizado correctamente");
+        notify(
+          "Éxito",
+          changedFields.password
+            ? "Usuario actualizado. Ya puede iniciar sesión con la nueva contraseña."
+            : "Usuario actualizado correctamente"
+        );
       }
       await loadUsers();
       closeModal();
@@ -364,7 +391,9 @@ const deleteUser =async (id:string)=>{
                 value={editingUser?.password ?? ""}
                 onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, password: text })}
                 secureTextEntry
-                autoComplete="off"
+                autoComplete="new-password"
+                textContentType="newPassword"
+                importantForAutofill="no"
                 {...inputProps}
               />
             ))}

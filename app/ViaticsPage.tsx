@@ -351,8 +351,6 @@ export default function ViaticsPage() {
   const [dieselCosto,setDieselCosto]=useState("");
   const [totalSDieselGlobal,setTotalDieselGlobal]=useState(0);
   const [viaticoSeleccionado,setViaticoSeleccionado]=useState<any>(null);
-  const [casetaFoto,setCasetaFoto]=useState<string | null>(null);
-  const [casetaFotoRemoved,setCasetaFotoRemoved]=useState(false);
 
   //lista de costos extras
   const [costosExtrasList,setCostosExtrasList]=useState<{description:string,costo:string}[]>([]);
@@ -847,19 +845,17 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
     setTag("");
     setDieselCargas("");
     setDieselCosto("");
-    setCasetaFoto(null);
     setCostosExtrasList([]);
     setExtraDesc("");
     setExtraCosto("");
     setShowForm(true);
   }
   setFacturaRemoved(false);
-  setCasetaFotoRemoved(false);
   setShowFactura(false);
   setModalVisible(true);
 }, []);
 
- const pickFactura = async () => {
+  const pickFactura = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({ type: ["image/*", "application/pdf"] });
       if ((result as any).type === "cancel") return;
@@ -870,23 +866,6 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
     } catch (e) {
       console.error(e);
       Alert.alert("Error", "Ocurrió un problema al seleccionar el archivo");
-    }
-  };
-
-  const pickCasetaFoto= async ()=>{
-    try{
-      const result=await DocumentPicker.getDocumentAsync({
-        type:["image/*"],
-        copyToCacheDirectory:true
-      });
-      if (result.canceled) return;
-
-      const file=result.assets[0];
-      setCasetaFoto(file.uri);
-      setCasetaFotoRemoved(false);
-    }catch (e){
-      console.error(e);
-      Alert.alert("Error","No se pudo seleccionar la imagen ");
     }
   };
 
@@ -1015,10 +994,6 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
         formData.append("factura", "");
       }
 
-      if (casetaFoto && isLocalUploadUri(casetaFoto)) {
-        // Se conserva para futuros campos; el backend actual solo acepta factura
-      }
-
       const url = editingViatico
         ? `${BASE_URL}/viatics/${editingViatico.id}`
         : `${BASE_URL}/viatics`;
@@ -1033,7 +1008,7 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
       });
 
       if (!res.ok) {
-        let message = "No se pudo guardar el viático";
+        let message = "No se pudo guardar el gasto";
         try {
           const errBody = await res.json();
           message =
@@ -1049,10 +1024,10 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
 
       await loadViaticos();
       closeModal();
-      notify("Listo", editingViatico ? "Viático actualizado." : "Viático guardado.");
+      notify("Listo", editingViatico ? "Gasto actualizado." : "Gasto guardado.");
     } catch (error: any) {
       console.error(error);
-      notify("Error", error?.message || "No se pudo guardar el viático");
+      notify("Error", error?.message || "No se pudo guardar el gasto");
     } finally {
       setSaving(false);
     }
@@ -1063,19 +1038,19 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
       try {
         await api.delete(`/viatics/${id}`);
         setViaticos((prev) => prev.filter((v) => v.id !== id));
-        notify("Listo", "Viático eliminado correctamente.");
+        notify("Listo", "Gasto eliminado correctamente.");
       } catch (e) {
-        notify("Error", "No se pudo eliminar el viático.");
+        notify("Error", "No se pudo eliminar el gasto.");
       }
     };
 
     if (Platform.OS === "web") {
-      const confirmed = window.confirm("¿Estás seguro de que deseas eliminar este viático?");
+      const confirmed = window.confirm("¿Estás seguro de que deseas eliminar este gasto?");
       if (confirmed) await proceedWithDelete();
       return;
     }
 
-    Alert.alert("Confirmar eliminación", "¿Estás seguro de que deseas eliminar este viático?", [
+    Alert.alert("Confirmar eliminación", "¿Estás seguro de que deseas eliminar este gasto?", [
       { text: "Cancelar", style: "cancel" },
       { text: "Eliminar", style: "destructive", onPress: () => { void proceedWithDelete(); } },
     ]);
@@ -1578,7 +1553,7 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
               activeOpacity={0.85}
             >
               <FontAwesome5 name="edit" size={13} color="#ffffff" />
-              <Text style={[styles.saveButtonText, styles.actionButtonTextMobile]}>Editar viático</Text>
+              <Text style={[styles.saveButtonText, styles.actionButtonTextMobile]}>Editar gasto</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.cancelButton, styles.cancelButtonMobile]}
@@ -1605,7 +1580,7 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={[styles.modalTitle, isMobile && styles.modalTitleMobile]}>
-                {editingViatico ? "Editar Viático" : "Nuevo Viático"}
+                {editingViatico ? "Editar gasto" : "Añadir gasto"}
               </Text>
               <Text style={styles.modalSubtitle}>
                 {editingViatico
@@ -1716,20 +1691,6 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
                 <Text style={styles.conceptInputLabel}>TAG</Text>
                 <TextInput value={tag} onChangeText={setTag} keyboardType="numeric" placeholder="0" {...modalInputProps} />
               </View>
-            </View>
-            <View style={styles.uploadBlock}>
-              <Text style={styles.conceptInputLabel}>Comprobante caseta</Text>
-              {casetaFoto ? (
-                <>
-                  <Image source={{ uri: casetaFoto }} style={styles.facturaPreview} />
-                  <View style={styles.modalBtnRow}>
-                    {renderModalBtn("Reemplazar", pickCasetaFoto)}
-                    {renderModalBtn("Eliminar", () => { setCasetaFoto(null); setCasetaFotoRemoved(true); }, "danger")}
-                  </View>
-                </>
-              ) : (
-                renderModalBtn("Subir foto", pickCasetaFoto, "primary")
-              )}
             </View>
             {renderMiniTotal("Suma casetas + TAG", totalCasetasYTag)}
           </View>
@@ -1885,7 +1846,7 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
                 disabled={saving}
                 activeOpacity={0.85}
                 accessibilityRole="button"
-                accessibilityLabel="Guardar viático"
+                accessibilityLabel="Guardar gasto"
                 {...(Platform.OS === "web"
                   ? {
                       onClick: (e: any) => {
@@ -1927,7 +1888,7 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
                 disabled={saving}
                 activeOpacity={0.85}
                 accessibilityRole="button"
-                accessibilityLabel="Guardar viático"
+                accessibilityLabel="Guardar gasto"
                 {...(Platform.OS === "web"
                   ? {
                       onClick: (e: any) => {
@@ -1979,7 +1940,7 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
         <View style={styles.pageHeader}>
           <View style={styles.pageHeaderText}>
             <Text style={[styles.pageTitle, isMobile && styles.pageTitleMobile]}>
-              Viáticos Registrados
+              Gastos
             </Text>
             <Text style={styles.subtitle}>Gastos de viaje, diesel y comprobantes</Text>
           </View>
@@ -1994,7 +1955,7 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
                 activeOpacity={0.85}
               >
                 <FontAwesome5 name="plus" size={14} color="#ffffff" />
-                <Text style={styles.addButtonText}>Nuevo Viático</Text>
+                <Text style={styles.addButtonText}>Añadir gasto</Text>
               </TouchableOpacity>
             </View>
 
@@ -2112,7 +2073,7 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
           {!listLoading && !loadError ? (
             <View style={[styles.listHeader, isNarrowList && styles.listHeaderMobile]}>
               <Text style={styles.listHeaderTitle}>
-                {displayedViaticos.length} viático{displayedViaticos.length === 1 ? "" : "s"}
+                {displayedViaticos.length} gasto{displayedViaticos.length === 1 ? "" : "s"}
               </Text>
               <Text style={[styles.listHeaderHint, isNarrowList && styles.listHeaderHintMobile]}>
                 {weekLabel}
@@ -2123,7 +2084,7 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
           {listLoading ? (
             <View style={styles.emptyState}>
               <FontAwesome5 name="spinner" size={20} color="#9ca3af" />
-              <Text style={styles.emptyText}>Cargando viáticos...</Text>
+              <Text style={styles.emptyText}>Cargando gastos...</Text>
             </View>
           ) : loadError ? (
             <View style={styles.emptyState}>
@@ -2136,13 +2097,13 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
           ) : viaticos.length === 0 ? (
             <View style={styles.emptyState}>
               <FontAwesome5 name="wallet" size={22} color="#9ca3af" />
-              <Text style={styles.emptyTitle}>No hay viáticos registrados</Text>
-              <Text style={styles.emptyText}>Pulsa "Nuevo Viático" para crear el primero.</Text>
+              <Text style={styles.emptyTitle}>No hay gastos registrados</Text>
+              <Text style={styles.emptyText}>Pulsa "Añadir gasto" para crear el primero.</Text>
             </View>
           ) : displayedViaticos.length === 0 ? (
             <View style={styles.emptyState}>
               <FontAwesome5 name="calendar-week" size={22} color="#9ca3af" />
-              <Text style={styles.emptyTitle}>Sin viáticos esta semana</Text>
+              <Text style={styles.emptyTitle}>Sin gastos esta semana</Text>
               <Text style={styles.emptyText}>
                 Elige otra semana en el selector para ver más resultados.
               </Text>
