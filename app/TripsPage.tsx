@@ -500,6 +500,7 @@ export default function TripsPage() {
   const [weekSheetVisible, setWeekSheetVisible] = useState(false);
   const [checklistTrip, setChecklistTrip] = useState<Trip | null>(null);
   const [checklistChecked, setChecklistChecked] = useState<Record<ChecklistId, boolean>>(emptyChecklistState);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [llegadaTouched, setLlegadaTouched] = useState(false);
   const [adminShowForm, setAdminShowForm] = useState(true);
   const [showLlegadaPicker, setShowLlegadaPicker] = useState(false);
@@ -1417,30 +1418,83 @@ const saveTrip = async () => {
   
 
 
-const deleteTrip = async (id: string) => {
+const deleteTrip = (id: string) => {
   if (!isAdmin) return;
-  
-  const proceedWithDelete = async () => {
-    try {
-      await api.delete(`/trips/${id}`); 
-      
-      setTrips((prev) => prev.filter((t) => t.id !== id));
-      Alert.alert("Éxito", "Viaje eliminado correctamente");
-    } catch (error) {
-      console.error("Error eliminando viaje", error);
-      Alert.alert("Error", "No se pudo eliminar el viaje");
+  // Modal propio: Alert.alert / window.confirm fallan o no se ven en Expo web/móvil
+  setDeleteConfirmId(String(id));
+};
+
+const proceedDeleteTrip = async () => {
+  const id = deleteConfirmId;
+  if (!id) return;
+  setDeleteConfirmId(null);
+  try {
+    await api.delete(`/trips/${id}`);
+    setTrips((prev) => prev.filter((t) => t.id !== id));
+    if (editingTrip && String(editingTrip.id) === id) {
+      closeModal();
     }
-  };
+    notify("Éxito", "Viaje eliminado correctamente");
+  } catch (error) {
+    console.error("Error eliminando viaje", error);
+    notify("Error", "No se pudo eliminar el viaje");
+  }
+};
+
+const closeDeleteConfirm = () => setDeleteConfirmId(null);
+
+const renderDeleteConfirmModal = () => {
+  if (!deleteConfirmId) return null;
+
+  const card = (
+    <View
+      style={[styles.confirmCard, isNarrowList && styles.confirmCardMobile]}
+      {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+    >
+      <View style={styles.confirmIconBadge}>
+        <FontAwesome5 name="trash-alt" size={18} color="#ffffff" />
+      </View>
+      <Text style={styles.confirmTitle}>Eliminar viaje</Text>
+      <Text style={styles.confirmMessage}>
+        ¿Estás seguro de que deseas eliminar este viaje? Esta acción no se puede deshacer.
+      </Text>
+      <View style={styles.confirmActions}>
+        <TouchableOpacity
+          style={styles.confirmCancelBtn}
+          onPress={closeDeleteConfirm}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.confirmCancelText}>Cancelar</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.confirmDeleteBtn}
+          onPress={() => {
+            void proceedDeleteTrip();
+          }}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.confirmDeleteText}>Eliminar</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const overlay = (
+    <View style={[styles.checklistOverlay, styles.checklistOverlayWeb]} pointerEvents="box-none">
+      <Pressable style={styles.checklistBackdrop} onPress={closeDeleteConfirm} />
+      {card}
+    </View>
+  );
 
   if (Platform.OS === "web") {
-    const confirmed = window.confirm("¿Estás seguro de que deseas eliminar este viaje?");
-    if (confirmed) await proceedWithDelete(); // Agregué await por seguridad
-  } else {
-    Alert.alert("Confirmar eliminación", "¿Estás seguro de que deseas eliminar este viaje?", [
-      { text: "Cancelar", style: "cancel" },
-      { text: "Eliminar", style: "destructive", onPress: proceedWithDelete }
-    ]);
+    return <Portal>{overlay}</Portal>;
   }
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={closeDeleteConfirm}>
+      {overlay}
+    </Modal>
+  );
 };
 
   const resolveUserName = useCallback(
@@ -3399,6 +3453,7 @@ const deleteTrip = async (id: string) => {
 
       {isAdmin ? renderWeekSelectSheet() : null}
       {renderStartChecklistModal()}
+      {renderDeleteConfirmModal()}
 
       {Platform.OS === "web" && modalVisible ? (
         <Portal>
@@ -4749,6 +4804,87 @@ const styles = StyleSheet.create({
   },
   checklistConfirmBtnDisabled: { opacity: 0.45 },
   checklistConfirmText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#ffffff",
+  },
+  confirmCard: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: "#ffffff",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 22,
+    alignItems: "center",
+    gap: 12,
+    zIndex: 1,
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 20px 48px rgba(0,0,0,0.18)" as any }
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.18,
+          shadowRadius: 20,
+          shadowOffset: { width: 0, height: 10 },
+          elevation: 14,
+        }),
+  },
+  confirmCardMobile: {
+    maxWidth: "100%",
+    padding: 18,
+  },
+  confirmIconBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "#dc2626",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  confirmTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111111",
+    textAlign: "center",
+  },
+  confirmMessage: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#6b7280",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  confirmActions: {
+    flexDirection: "row",
+    gap: 10,
+    width: "100%",
+    marginTop: 8,
+  },
+  confirmCancelBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmCancelText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#374151",
+  },
+  confirmDeleteBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 999,
+    backgroundColor: "#dc2626",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmDeleteText: {
     fontSize: 14,
     fontWeight: "800",
     color: "#ffffff",

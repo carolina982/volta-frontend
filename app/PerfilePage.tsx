@@ -28,10 +28,37 @@ const API_ORIGIN = BASE_URL.replace(/\/api\/?$/, "");
 
 const resolvePhotoUrl = (photoUrl?: string | null) => {
   if (!photoUrl) return null;
-  if (photoUrl.startsWith("http") || photoUrl.startsWith("file:") || photoUrl.startsWith("blob:")) {
-    return photoUrl;
+  const raw = String(photoUrl).trim();
+  if (!raw) return null;
+  if (
+    raw.startsWith("http") ||
+    raw.startsWith("file:") ||
+    raw.startsWith("blob:") ||
+    raw.startsWith("content://") ||
+    raw.startsWith("ph://") ||
+    raw.startsWith("data:")
+  ) {
+    return raw;
   }
-  return `${API_ORIGIN}${photoUrl.startsWith("/") ? "" : "/"}${photoUrl}`;
+  const path = raw.startsWith("/") ? raw : `/${raw}`;
+  return `${API_ORIGIN}${path}`;
+};
+
+/** Guarda en sesión la ruta relativa del API (sin cache-bust). */
+const toStoredPhotoUrl = (photoUrl?: string | null) => {
+  if (!photoUrl) return null;
+  const raw = String(photoUrl).split("?")[0].trim();
+  if (!raw) return null;
+  if (raw.startsWith("/uploads/")) return raw;
+  try {
+    if (raw.startsWith("http")) {
+      const u = new URL(raw);
+      if (u.pathname.startsWith("/uploads/")) return u.pathname;
+    }
+  } catch {
+    /* ignore */
+  }
+  return raw;
 };
 
 const isLocalPhotoUri = (uri?: string | null) => {
@@ -56,15 +83,18 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
   const [email, setEmail] = useState(currentUser?.email ?? "");
   const [contacto, setContacto] = useState(currentUser?.contacto ?? "");
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [savedPhotoUri, setSavedPhotoUri] = useState<string | null>(null);
   const [photoFailed, setPhotoFailed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [formMessage, setFormMessage] = useState("");
+  const [formOk, setFormOk] = useState(false);
 
   const displayRole = currentUser?.rol || "Usuario";
   const roleKey = displayRole.toLowerCase();
   const isAdmin = roleKey === "admin";
   /** Operador / Ayudante: datos bloqueados, solo foto + guardar */
   const fieldsLocked = !isAdmin;
+  const hasPendingPhoto = isLocalPhotoUri(photoUri);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -73,8 +103,12 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     setNombre(currentUser.nombre || "");
     setApellido(currentUser.apellido || "");
     setEmail(currentUser.email || "");
-    setPhotoUri(resolvePhotoUrl(currentUser.photoUrl));
+    const resolved = resolvePhotoUrl(currentUser.photoUrl);
+    setPhotoUri(resolved);
+    setSavedPhotoUri(resolved);
     setPhotoFailed(false);
+    setFormMessage("");
+    setFormOk(false);
   }, [currentUser]);
 
   const notify = (title: string, message: string) => {
@@ -126,18 +160,123 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     return false;
   };
 
+  const ensureCameraPermission = async () => {
+    if (Platform.OS === "web") return false;
+
+    const current = await ImagePicker.getCameraPermissionsAsync();
+    if (current.granted) return true;
+
+    if (current.canAskAgain === false) {
+      Alert.alert(
+        "Permiso de cámara",
+        "Activa la cámara en Ajustes para tomar tu foto de perfil.",
+        [
+          { text: "Cancelar", style: "cancel" },
+          { text: "Abrir Ajustes", onPress: () => Linking.openSettings() },
+        ]
+      );
+      return false;
+    }
+
+    const requested = await ImagePicker.requestCameraPermissionsAsync();
+    if (requested.granted) return true;
+
+    Alert.alert(
+      "Permiso requerido",
+      "Necesitamos acceso a la cámara para tomar la foto de perfil.",
+      [
+        { text: "Cancelar", style: "cancel" },
+        { text: "Abrir Ajustes", onPress: () => Linking.openSettings() },
+      ]
+    );
+    return false;
+  };
+
+  const applyPickedAsset = (uri: string) => {
+    setPhotoUri(uri);
+    setPhotoFailed(false);
+    setFormMessage("");
+    setFormOk(false);
+  };
+
+  const pickFromGallery = async () => {
+    try {
+      const ok = await ensureGalleryPermission();
+      if (!ok) return;
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.75,
+      });
+
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        applyPickedAsset(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error(error);
+      notify("Error", "No se pudo abrir la galería de fotos");
+    }
+  };
+
+  const takePhoto = async () => {
+    try {
+      if (Platform.OS === "web") {
+        await pickFromGallery();
+        return;
+      }
+      const ok = await ensureCameraPermission();
+      if (!ok) return;
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.75,
+      });
+
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        applyPickedAsset(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error(error);
+      notify("Error", "No se pudo abrir la cámara");
+    }
+  };
+
+  const discardPendingPhoto = () => {
+    setPhotoUri(savedPhotoUri);
+    setPhotoFailed(false);
+    setFormMessage("");
+    setFormOk(false);
+  };
+
   const handleSave = async () => {
     if (!currentUser || isSaving) return;
     setFormMessage("");
+    setFormOk(false);
 
     if (!fieldsLocked && (!nombre.trim() || !apellido.trim())) {
       setFormMessage("Nombre y apellido son obligatorios.");
       return;
     }
 
-    if (fieldsLocked && !isLocalPhotoUri(photoUri)) {
-      setFormMessage("Elige una nueva imagen para guardar cambios.");
+    if (fieldsLocked && !hasPendingPhoto) {
+      setFormMessage("Elige una nueva imagen (galería o cámara) para guardar.");
       return;
+    }
+
+    if (!fieldsLocked && !hasPendingPhoto) {
+      const unchanged =
+        nombre.trim() === (currentUser.nombre || "") &&
+        apellido.trim() === (currentUser.apellido || "") &&
+        email.trim() === (currentUser.email || "") &&
+        contacto.trim() === (currentUser.contacto || "");
+      if (unchanged) {
+        setFormMessage("No hay cambios para guardar.");
+        return;
+      }
     }
 
     setIsSaving(true);
@@ -151,7 +290,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
         formData.append("contacto", contacto.trim());
       }
 
-      if (isLocalPhotoUri(photoUri) && photoUri) {
+      if (hasPendingPhoto && photoUri) {
         if (Platform.OS === "web") {
           const response = await fetch(photoUri);
           const blob = await response.blob();
@@ -167,9 +306,8 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
         }
       }
 
-      const endpoint = fieldsLocked
-        ? `/users/${currentUser._id}/photo`
-        : `/users/${currentUser._id}`;
+      const userId = currentUser._id || currentUser.id;
+      const endpoint = fieldsLocked ? `/users/${userId}/photo` : `/users/${userId}`;
 
       const res = await api.patch(endpoint, formData, {
         headers: Platform.OS === "web" ? { "Content-Type": "multipart/form-data" } : undefined,
@@ -178,8 +316,14 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
       });
 
       const data = res.data || {};
-      if (data.photoUrl) {
-        setPhotoUri(`${resolvePhotoUrl(data.photoUrl)}?t=${Date.now()}`);
+      const storedPhoto = toStoredPhotoUrl(data.photoUrl) || toStoredPhotoUrl(currentUser.photoUrl);
+      const displayPhoto = data.photoUrl
+        ? `${resolvePhotoUrl(data.photoUrl)}?t=${Date.now()}`
+        : savedPhotoUri;
+
+      if (displayPhoto) {
+        setPhotoUri(displayPhoto);
+        setSavedPhotoUri(displayPhoto);
         setPhotoFailed(false);
       }
 
@@ -187,54 +331,35 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
         setCurrentUser({
           ...currentUser,
           ...data,
-          nombre: fieldsLocked ? currentUser.nombre : data.nombre ?? nombre,
-          apellido: fieldsLocked ? currentUser.apellido : data.apellido ?? apellido,
-          email: fieldsLocked ? currentUser.email : data.email ?? email,
-          contacto: fieldsLocked ? currentUser.contacto : data.contacto ?? contacto,
+          _id: String(data._id || currentUser._id || userId),
+          id: String(data._id || data.id || currentUser.id || userId),
+          nombre: fieldsLocked ? currentUser.nombre : data.nombre ?? nombre.trim(),
+          apellido: fieldsLocked ? currentUser.apellido : data.apellido ?? apellido.trim(),
+          email: fieldsLocked ? currentUser.email : data.email ?? email.trim(),
+          contacto: fieldsLocked ? currentUser.contacto : data.contacto ?? contacto.trim(),
           rol: currentUser.rol,
-          photoUrl: data.photoUrl
-            ? `${resolvePhotoUrl(data.photoUrl)}?t=${Date.now()}`
-            : currentUser.photoUrl,
+          // Ruta relativa + cache-bust para que el header refresque la imagen
+          photoUrl: storedPhoto ? `${storedPhoto}?t=${Date.now()}` : currentUser.photoUrl,
         });
       }
 
-      notify(
-        "Éxito",
-        fieldsLocked ? "Foto actualizada correctamente" : "Perfil actualizado correctamente"
-      );
+      const okMsg = fieldsLocked
+        ? "Foto actualizada correctamente"
+        : "Perfil actualizado correctamente";
+      setFormOk(true);
+      setFormMessage(okMsg);
+      notify("Éxito", okMsg);
     } catch (error: any) {
       console.error(error);
       const message =
         error?.response?.data?.message ||
         error?.message ||
         "No se pudo actualizar el perfil";
+      setFormOk(false);
       setFormMessage(message);
       notify("Error", message);
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const pickerImage = async () => {
-    try {
-      const ok = await ensureGalleryPermission();
-      if (!ok) return;
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets?.[0]?.uri) {
-        setPhotoUri(result.assets[0].uri);
-        setPhotoFailed(false);
-        setFormMessage("");
-      }
-    } catch (error) {
-      console.error(error);
-      notify("Error", "No se pudo abrir la galería de fotos");
     }
   };
 
@@ -243,15 +368,18 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     underlineColor: "transparent",
     activeUnderlineColor: "transparent",
     dense: true,
-    contentStyle: styles.inputContent,
-    style: styles.input,
+    contentStyle: [styles.inputContent, fieldsLocked && styles.inputContentLocked],
+    style: [styles.input, fieldsLocked && styles.inputLocked],
     placeholderTextColor: "#9ca3af",
     editable: !fieldsLocked,
   };
 
-  const renderField = (label: string, field: React.ReactNode) => (
+  const renderField = (label: string, field: React.ReactNode, lockedHint?: boolean) => (
     <View style={styles.fieldGroup}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={styles.fieldLabelRow}>
+        <Text style={styles.fieldLabel}>{label}</Text>
+        {lockedHint ? <Text style={styles.fieldLockedTag}>Solo admin</Text> : null}
+      </View>
       {field}
     </View>
   );
@@ -288,8 +416,8 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
               <Text style={[styles.title, isMobile && styles.titleMobile]}>Mi Perfil</Text>
               <Text style={styles.subtitle}>
                 {fieldsLocked
-                  ? "Tu foto de perfil y datos de cuenta"
-                  : "Actualiza tu información personal"}
+                  ? "Actualiza tu foto · el resto lo gestiona un admin"
+                  : "Actualiza tu información personal y foto"}
               </Text>
             </View>
             <View style={styles.roleBadge}>
@@ -306,17 +434,25 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
             ]}
           >
             <View style={[styles.avatarSection, isMobile && styles.avatarSectionMobile]}>
-              {photoUri && !photoFailed ? (
-                <Image
-                  source={{ uri: photoUri }}
-                  style={styles.avatarImage}
-                  onError={() => setPhotoFailed(true)}
-                />
-              ) : (
-                <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarText}>{getInitials()}</Text>
-                </View>
-              )}
+              <View style={styles.avatarWrap}>
+                {photoUri && !photoFailed ? (
+                  <Image
+                    source={{ uri: photoUri }}
+                    style={styles.avatarImage}
+                    onError={() => setPhotoFailed(true)}
+                  />
+                ) : (
+                  <View style={styles.avatarPlaceholder}>
+                    <Text style={styles.avatarText}>{getInitials()}</Text>
+                  </View>
+                )}
+                {hasPendingPhoto ? (
+                  <View style={styles.pendingBadge}>
+                    <Text style={styles.pendingBadgeText}>Nueva</Text>
+                  </View>
+                ) : null}
+              </View>
+
               <Text style={styles.profileName} numberOfLines={2}>
                 {[nombre, apellido].filter(Boolean).join(" ") || "Usuario"}
               </Text>
@@ -324,18 +460,40 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                 <FontAwesome5 name={roleIcon} size={10} color="#111111" />
                 <Text style={styles.profileRolePillText}>{displayRole}</Text>
               </View>
-              <TouchableOpacity
-                style={styles.changePhotoButton}
-                onPress={pickerImage}
-                activeOpacity={0.85}
-              >
-                <FontAwesome5 name="camera" size={12} color="#111111" />
-                <Text style={styles.changePhotoText}>Cambiar Imagen</Text>
-              </TouchableOpacity>
+
+              <View style={styles.photoActions}>
+                <TouchableOpacity
+                  style={styles.changePhotoButton}
+                  onPress={pickFromGallery}
+                  activeOpacity={0.85}
+                >
+                  <FontAwesome5 name="images" size={12} color="#111111" />
+                  <Text style={styles.changePhotoText}>Galería</Text>
+                </TouchableOpacity>
+                {Platform.OS !== "web" ? (
+                  <TouchableOpacity
+                    style={styles.changePhotoButton}
+                    onPress={takePhoto}
+                    activeOpacity={0.85}
+                  >
+                    <FontAwesome5 name="camera" size={12} color="#111111" />
+                    <Text style={styles.changePhotoText}>Cámara</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+
+              {hasPendingPhoto ? (
+                <TouchableOpacity onPress={discardPendingPhoto} style={styles.discardLink}>
+                  <Text style={styles.discardLinkText}>Descartar foto nueva</Text>
+                </TouchableOpacity>
+              ) : null}
+
               <Text style={styles.photoHint}>
-                {Platform.OS === "web"
-                  ? "JPG o PNG · se guarda al pulsar Guardar"
-                  : "Si pide permiso, elige Permitir · luego Guardar"}
+                {hasPendingPhoto
+                  ? "Foto lista · pulsa Guardar para subirla"
+                  : Platform.OS === "web"
+                    ? "JPG o PNG · se guarda al pulsar Guardar"
+                    : "Elige galería o cámara · luego Guardar"}
               </Text>
               {fieldsLocked ? (
                 <Text style={styles.photoHintLocked}>
@@ -355,7 +513,8 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                       onChangeText={setNombre}
                       returnKeyType="next"
                       {...inputProps}
-                    />
+                    />,
+                    fieldsLocked
                   )}
                 </View>
                 <View style={isLargeScreen ? styles.fieldHalf : styles.fieldFull}>
@@ -367,7 +526,8 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                       onChangeText={setApellido}
                       returnKeyType="next"
                       {...inputProps}
-                    />
+                    />,
+                    fieldsLocked
                   )}
                 </View>
               </View>
@@ -382,7 +542,8 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                   autoCapitalize="none"
                   returnKeyType="next"
                   {...inputProps}
-                />
+                />,
+                fieldsLocked
               )}
 
               {renderField(
@@ -394,7 +555,8 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                   keyboardType="phone-pad"
                   returnKeyType="done"
                   {...inputProps}
-                />
+                />,
+                fieldsLocked
               )}
 
               <View style={styles.fieldGroup}>
@@ -406,16 +568,35 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
               </View>
 
               {formMessage ? (
-                <View style={styles.formMessageBox}>
-                  <FontAwesome5 name="exclamation-circle" size={12} color="#dc2626" />
-                  <Text style={styles.formMessage}>{formMessage}</Text>
+                <View
+                  style={[
+                    styles.formMessageBox,
+                    formOk ? styles.formMessageBoxOk : styles.formMessageBoxErr,
+                  ]}
+                >
+                  <FontAwesome5
+                    name={formOk ? "check-circle" : "exclamation-circle"}
+                    size={12}
+                    color={formOk ? "#059669" : "#dc2626"}
+                  />
+                  <Text
+                    style={[
+                      styles.formMessage,
+                      formOk ? styles.formMessageOk : styles.formMessageErr,
+                    ]}
+                  >
+                    {formMessage}
+                  </Text>
                 </View>
               ) : null}
 
               <TouchableOpacity
-                style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
+                style={[
+                  styles.saveButton,
+                  (isSaving || (fieldsLocked && !hasPendingPhoto)) && styles.saveButtonDisabled,
+                ]}
                 onPress={handleSave}
-                disabled={isSaving}
+                disabled={isSaving || (fieldsLocked && !hasPendingPhoto)}
                 activeOpacity={0.85}
               >
                 {isSaving ? (
@@ -424,7 +605,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                   <>
                     <FontAwesome5 name="save" size={14} color="#ffffff" />
                     <Text style={styles.saveButtonText}>
-                      {fieldsLocked ? "Guardar foto" : "Guardar Cambios"}
+                      {fieldsLocked ? "Guardar foto" : "Guardar cambios"}
                     </Text>
                   </>
                 )}
@@ -507,13 +688,16 @@ const styles = StyleSheet.create({
     borderBottomColor: "#f1f5f9",
     width: "100%",
   },
+  avatarWrap: {
+    position: "relative",
+    marginBottom: 12,
+  },
   avatarImage: {
     width: 112,
     height: 112,
     borderRadius: 56,
     borderWidth: 3,
     borderColor: "#e5e7eb",
-    marginBottom: 12,
     backgroundColor: "#111111",
     overflow: "hidden",
   },
@@ -524,11 +708,26 @@ const styles = StyleSheet.create({
     backgroundColor: "#111111",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 12,
     borderWidth: 3,
     borderColor: "#e5e7eb",
   },
   avatarText: { color: "#ffffff", fontWeight: "800", fontSize: 34 },
+  pendingBadge: {
+    position: "absolute",
+    right: -2,
+    bottom: 4,
+    backgroundColor: "#059669",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: "#ffffff",
+  },
+  pendingBadgeText: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "800",
+  },
   profileName: {
     fontSize: 20,
     fontWeight: "800",
@@ -555,12 +754,18 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#111111",
   },
+  photoActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 8,
+  },
   changePhotoButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     paddingVertical: 10,
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     borderRadius: 999,
     borderWidth: 1.5,
     borderColor: "#111111",
@@ -568,6 +773,13 @@ const styles = StyleSheet.create({
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
   changePhotoText: { color: "#111111", fontWeight: "700", fontSize: 13 },
+  discardLink: { marginTop: 10 },
+  discardLinkText: {
+    color: "#6b7280",
+    fontSize: 12,
+    fontWeight: "600",
+    textDecorationLine: "underline",
+  },
   photoHint: {
     marginTop: 8,
     fontSize: 11,
@@ -591,12 +803,26 @@ const styles = StyleSheet.create({
   fieldHalf: { flex: 1 },
   fieldFull: { width: "100%" },
   fieldGroup: { marginBottom: 14, width: "100%" },
+  fieldLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
   fieldLabel: {
     fontSize: 12,
     fontWeight: "700",
     color: "#374151",
-    marginBottom: 6,
     letterSpacing: 0.2,
+  },
+  fieldLockedTag: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#94a3b8",
+    backgroundColor: "#f1f5f9",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
   },
   input: {
     width: "100%",
@@ -607,7 +833,12 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
     marginBottom: 0,
   },
+  inputLocked: {
+    backgroundColor: "#f1f5f9",
+    borderColor: "#e2e8f0",
+  },
   inputContent: { color: "#111111", fontWeight: "600", fontSize: 14 },
+  inputContentLocked: { color: "#64748b" },
   roleReadonly: {
     flexDirection: "row",
     alignItems: "center",
@@ -624,12 +855,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#111111",
   },
-  roleHelp: {
-    marginTop: 6,
-    fontSize: 11,
-    color: "#9ca3af",
-    fontWeight: "600",
-  },
   formMessageBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -638,11 +863,19 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 10,
-    backgroundColor: "#fef2f2",
     borderWidth: 1,
+  },
+  formMessageBoxErr: {
+    backgroundColor: "#fef2f2",
     borderColor: "#fecaca",
   },
-  formMessage: { flex: 1, color: "#dc2626", fontSize: 12, fontWeight: "600" },
+  formMessageBoxOk: {
+    backgroundColor: "#ecfdf5",
+    borderColor: "#a7f3d0",
+  },
+  formMessage: { flex: 1, fontSize: 12, fontWeight: "600" },
+  formMessageErr: { color: "#dc2626" },
+  formMessageOk: { color: "#059669" },
   saveButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -655,6 +888,6 @@ const styles = StyleSheet.create({
     minHeight: 52,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
-  saveButtonDisabled: { opacity: 0.6 },
+  saveButtonDisabled: { opacity: 0.45 },
   saveButtonText: { color: "#ffffff", fontWeight: "700", fontSize: 15 },
 });

@@ -36,17 +36,25 @@ const API_ORIGIN = BASE_URL.replace(/\/api\/?$/, "");
 
 const resolvePhotoUrl = (photoUrl?: string | null) => {
   if (!photoUrl) return null;
-  const clean = String(photoUrl).split("?")[0].trim();
-  if (!clean) return null;
+  const raw = String(photoUrl).trim();
+  if (!raw) return null;
+
+  // Conserva ?t=... para forzar refresco tras cambiar foto
+  const qIndex = raw.indexOf("?");
+  const pathPart = qIndex >= 0 ? raw.slice(0, qIndex) : raw;
+  const query = qIndex >= 0 ? raw.slice(qIndex) : "";
+
   if (
-    clean.startsWith("http") ||
-    clean.startsWith("file:") ||
-    clean.startsWith("blob:") ||
-    clean.startsWith("data:")
+    pathPart.startsWith("http") ||
+    pathPart.startsWith("file:") ||
+    pathPart.startsWith("blob:") ||
+    pathPart.startsWith("data:")
   ) {
-    return clean;
+    return `${pathPart}${query}`;
   }
-  return `${API_ORIGIN}${clean.startsWith("/") ? "" : "/"}${clean}`;
+
+  const path = pathPart.startsWith("/") ? pathPart : `/${pathPart}`;
+  return `${API_ORIGIN}${path}${query}`;
 };
 
 function UserAvatar({
