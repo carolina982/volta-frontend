@@ -39,7 +39,8 @@ export default function Register() {
 
   const [email, setEmail] = useState("");
   const [nombre, setNombre] = useState("");
-  const [apellido, setApellido] = useState("");
+  const [apellidoPaterno, setApellidoPaterno] = useState("");
+  const [apellidoMaterno, setApellidoMaterno] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [rol, setRol] = useState<RegisterRole>("Operador");
@@ -79,8 +80,8 @@ export default function Register() {
   const handleRegister = async () => {
     if (saving) return;
 
-    if (!email || !nombre || !apellido || !contacto || !password || !confirmPassword || !rol) {
-      notify("Error", "Todos los campos son obligatorios");
+    if (!email || !nombre || !apellidoPaterno || !contacto || !password || !confirmPassword || !rol) {
+      notify("Error", "Todos los campos son obligatorios (excepto apellido materno)");
       return;
     }
 
@@ -100,8 +101,14 @@ export default function Register() {
 
       if (photoUrl) {
         const formData = new FormData();
+        const apellidoCompleto = [apellidoPaterno, apellidoMaterno]
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .join(" ");
         formData.append("nombre", nombre.trim());
-        formData.append("apellido", apellido.trim());
+        formData.append("apellidoPaterno", apellidoPaterno.trim());
+        formData.append("apellidoMaterno", apellidoMaterno.trim());
+        formData.append("apellido", apellidoCompleto);
         formData.append("email", email.trim().toLowerCase());
         formData.append("password", password);
         formData.append("rol", rol);
@@ -125,9 +132,15 @@ export default function Register() {
           res = await api.post("/users/register", formData);
         }
       } else {
+        const apellidoCompleto = [apellidoPaterno, apellidoMaterno]
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .join(" ");
         const newUser = {
           nombre: nombre.trim(),
-          apellido: apellido.trim(),
+          apellidoPaterno: apellidoPaterno.trim(),
+          apellidoMaterno: apellidoMaterno.trim(),
+          apellido: apellidoCompleto,
           email: email.trim().toLowerCase(),
           password,
           rol,
@@ -144,6 +157,8 @@ export default function Register() {
           id: userId,
           nombre: data.nombre,
           apellido: data.apellido,
+          apellidoPaterno: data.apellidoPaterno || apellidoPaterno.trim(),
+          apellidoMaterno: data.apellidoMaterno || apellidoMaterno.trim(),
           email: data.email,
           rol: data.rol,
           photoUrl: data.photoUrl || null,
@@ -215,7 +230,18 @@ export default function Register() {
             </View>
 
             <TextInput placeholder="Nombre" value={nombre} onChangeText={setNombre} {...inputProps} />
-            <TextInput placeholder="Apellido" value={apellido} onChangeText={setApellido} {...inputProps} />
+            <TextInput
+              placeholder="Apellido paterno"
+              value={apellidoPaterno}
+              onChangeText={setApellidoPaterno}
+              {...inputProps}
+            />
+            <TextInput
+              placeholder="Apellido materno"
+              value={apellidoMaterno}
+              onChangeText={setApellidoMaterno}
+              {...inputProps}
+            />
             <TextInput
               placeholder="Correo"
               value={email}

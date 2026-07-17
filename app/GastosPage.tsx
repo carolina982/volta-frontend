@@ -1,6 +1,6 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system/legacy";
+import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -816,8 +816,12 @@ const exportViaticosToExcel =async ()=>{
       filter === "week"
         ? `${periodLabelBase} ${formatWeekRangeLabel(selectedWeekStart)}`
         : periodLabelBase;
-    const periodSlug = periodDetail.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "");
-    const filename = `Viaticos_${periodSlug}_${stamp}.xlsx`;
+    const periodSlug = periodDetail
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    const filename = `Viaticos_${periodSlug || "export"}_${stamp}.xlsx`;
 
     if (Platform.OS === "web"){
       const excelBuffer= XLSX.write(wb,{
@@ -827,7 +831,20 @@ const exportViaticosToExcel =async ()=>{
       const blob=new Blob([excelBuffer],{
         type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
-      // En web de escritorio: descarga directa (más fiable que Web Share)
+      // En web móvil preferir compartir; en escritorio descarga directa
+      const nav = typeof navigator !== "undefined" ? (navigator as any) : null;
+      if (nav?.share && typeof File !== "undefined") {
+        try {
+          const file = new File([blob], filename, { type: blob.type });
+          if (!nav.canShare || nav.canShare({ files: [file] })) {
+            await nav.share({ files: [file], title: filename });
+            window.alert("Éxito\nReporte Excel generado correctamente");
+            return;
+          }
+        } catch {
+          // canceló o no disponible → descarga
+        }
+      }
       const url=window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href=url;
@@ -844,27 +861,39 @@ const exportViaticosToExcel =async ()=>{
       bookType:"xlsx",
       type:"base64",
     });
-    const fileUri=(FileSystem as any).documentDirectory + filename;
-    await FileSystem.writeAsStringAsync(fileUri,base64,{
-      encoding:"base64",
-    });
+    const safeName = filename.replace(/[^\w.\-]+/g, "_");
+    const file = new File(Paths.document, safeName);
+    if (file.exists) {
+      file.delete();
+    }
+    file.create();
+    file.write(base64, { encoding: "base64" });
     const canShare=await Sharing.isAvailableAsync();
     if (!canShare){
       Alert.alert("Error","No se puede compartir el archivo ");
       return;
     }
-    await Sharing.shareAsync(fileUri, {
+    await Sharing.shareAsync(file.uri, {
       mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       dialogTitle: "Compartir viáticos Excel",
       UTI: "com.microsoft.excel.xlsx",
     });
     Alert.alert("Exito","Reporte generado correctamente");
-  }catch (error){
+  }catch (error: any){
     console.error("Error exportando",error);
     if (Platform.OS === "web") {
-      window.alert("Error\nNo se pudo generar el archivo Excel");
+      window.alert(
+        `Error\nNo se pudo generar el archivo Excel${
+          error?.message ? `: ${String(error.message).slice(0, 120)}` : ""
+        }`
+      );
     } else {
-      Alert.alert("Error","No se pudo generar el archivo");
+      Alert.alert(
+        "Error",
+        error?.message
+          ? `No se pudo generar el Excel: ${String(error.message).slice(0, 120)}`
+          : "No se pudo generar el archivo"
+      );
     }
   }
 };

@@ -80,7 +80,12 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
   const isMobile = width < 768;
 
   const [nombre, setNombre] = useState(currentUser?.nombre ?? "");
-  const [apellido, setApellido] = useState(currentUser?.apellido ?? "");
+  const [apellidoPaterno, setApellidoPaterno] = useState(
+    currentUser?.apellidoPaterno ||
+      (currentUser?.apellidoMaterno ? "" : currentUser?.apellido) ||
+      ""
+  );
+  const [apellidoMaterno, setApellidoMaterno] = useState(currentUser?.apellidoMaterno ?? "");
   const [email, setEmail] = useState(currentUser?.email ?? "");
   const [contacto, setContacto] = useState(currentUser?.contacto ?? "");
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -103,7 +108,12 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
 
     setContacto(currentUser.contacto || "");
     setNombre(currentUser.nombre || "");
-    setApellido(currentUser.apellido || "");
+    setApellidoPaterno(
+      currentUser.apellidoPaterno ||
+        (currentUser.apellidoMaterno ? "" : currentUser.apellido) ||
+        ""
+    );
+    setApellidoMaterno(currentUser.apellidoMaterno || "");
     setEmail(currentUser.email || "");
     const resolved = resolvePhotoUrl(currentUser.photoUrl);
     setPhotoUri(resolved);
@@ -136,7 +146,12 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
   };
 
   const getInitials = () =>
-    `${nombre?.[0] || ""}${apellido?.[0] || ""}`.toUpperCase() || "U";
+    `${nombre?.[0] || ""}${apellidoPaterno?.[0] || ""}`.toUpperCase() || "U";
+
+  const apellidoCompleto = [apellidoPaterno, apellidoMaterno]
+    .map((s) => String(s || "").trim())
+    .filter(Boolean)
+    .join(" ");
 
   const roleIcon = useMemo(() => {
     if (roleKey === "admin") return "user-shield";
@@ -273,8 +288,8 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     setFormMessage("");
     setFormOk(false);
 
-    if (!fieldsLocked && (!nombre.trim() || !apellido.trim())) {
-      setFormMessage("Nombre y apellido son obligatorios.");
+    if (!fieldsLocked && (!nombre.trim() || !apellidoPaterno.trim())) {
+      setFormMessage("Nombre y apellido paterno son obligatorios.");
       return;
     }
 
@@ -286,7 +301,11 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     if (!fieldsLocked && !hasPendingPhoto) {
       const unchanged =
         nombre.trim() === (currentUser.nombre || "") &&
-        apellido.trim() === (currentUser.apellido || "") &&
+        apellidoPaterno.trim() ===
+          (currentUser.apellidoPaterno ||
+            (currentUser.apellidoMaterno ? "" : currentUser.apellido) ||
+            "") &&
+        apellidoMaterno.trim() === (currentUser.apellidoMaterno || "") &&
         email.trim() === (currentUser.email || "") &&
         contacto.trim() === (currentUser.contacto || "");
       if (unchanged) {
@@ -301,7 +320,9 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
 
       if (!fieldsLocked) {
         formData.append("nombre", nombre.trim());
-        formData.append("apellido", apellido.trim());
+        formData.append("apellidoPaterno", apellidoPaterno.trim());
+        formData.append("apellidoMaterno", apellidoMaterno.trim());
+        formData.append("apellido", apellidoCompleto);
         formData.append("email", email.trim());
         formData.append("contacto", contacto.trim());
       }
@@ -350,7 +371,13 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
           _id: String(data._id || currentUser._id || userId),
           id: String(data._id || data.id || currentUser.id || userId),
           nombre: fieldsLocked ? currentUser.nombre : data.nombre ?? nombre.trim(),
-          apellido: fieldsLocked ? currentUser.apellido : data.apellido ?? apellido.trim(),
+          apellido: fieldsLocked ? currentUser.apellido : data.apellido ?? apellidoCompleto,
+          apellidoPaterno: fieldsLocked
+            ? currentUser.apellidoPaterno
+            : data.apellidoPaterno ?? apellidoPaterno.trim(),
+          apellidoMaterno: fieldsLocked
+            ? currentUser.apellidoMaterno
+            : data.apellidoMaterno ?? apellidoMaterno.trim(),
           email: fieldsLocked ? currentUser.email : data.email ?? email.trim(),
           contacto: fieldsLocked ? currentUser.contacto : data.contacto ?? contacto.trim(),
           rol: currentUser.rol,
@@ -471,7 +498,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
               </View>
 
               <Text style={styles.profileName} numberOfLines={2}>
-                {[nombre, apellido].filter(Boolean).join(" ") || "Usuario"}
+                {[nombre, apellidoPaterno, apellidoMaterno].filter(Boolean).join(" ") || "Usuario"}
               </Text>
               <View style={styles.profileRolePill}>
                 <FontAwesome5 name={roleIcon} size={10} color="#111111" />
@@ -520,8 +547,8 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
             </View>
 
             <View style={[styles.formSection, isLargeScreen && styles.formSectionDesktop]}>
-              <View style={isLargeScreen ? styles.fieldRow : styles.fieldStack}>
-                <View style={isLargeScreen ? styles.fieldHalf : styles.fieldFull}>
+              <View style={styles.fieldStack}>
+                <View style={styles.fieldFull}>
                   {renderField(
                     "Nombre",
                     <TextInput
@@ -534,18 +561,33 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                     fieldsLocked
                   )}
                 </View>
-                <View style={isLargeScreen ? styles.fieldHalf : styles.fieldFull}>
-                  {renderField(
-                    "Apellido",
-                    <TextInput
-                      placeholder="Apellido"
-                      value={apellido}
-                      onChangeText={setApellido}
-                      returnKeyType="next"
-                      {...inputProps}
-                    />,
-                    fieldsLocked
-                  )}
+                <View style={isLargeScreen ? styles.fieldRow : styles.fieldStack}>
+                  <View style={isLargeScreen ? styles.fieldHalf : styles.fieldFull}>
+                    {renderField(
+                      "Apellido paterno",
+                      <TextInput
+                        placeholder="Apellido paterno"
+                        value={apellidoPaterno}
+                        onChangeText={setApellidoPaterno}
+                        returnKeyType="next"
+                        {...inputProps}
+                      />,
+                      fieldsLocked
+                    )}
+                  </View>
+                  <View style={isLargeScreen ? styles.fieldHalf : styles.fieldFull}>
+                    {renderField(
+                      "Apellido materno",
+                      <TextInput
+                        placeholder="Apellido materno"
+                        value={apellidoMaterno}
+                        onChangeText={setApellidoMaterno}
+                        returnKeyType="next"
+                        {...inputProps}
+                      />,
+                      fieldsLocked
+                    )}
+                  </View>
                 </View>
               </View>
 

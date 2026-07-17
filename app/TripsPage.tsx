@@ -457,14 +457,19 @@ const downloadExcelFile = async (wb: XLSX.WorkBook, filename: string) => {
   }
 
   const base64 = XLSX.write(wb, { bookType: "xlsx", type: "base64" });
-  const FileSystem = (await import("expo-file-system/legacy")).default;
+  const { File, Paths } = await import("expo-file-system");
   const Sharing = await import("expo-sharing");
-  const fileUri = `${(FileSystem as any).documentDirectory}${filename}`;
-  await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: "base64" });
+  const safeName = String(filename || "reporte.xlsx").replace(/[^\w.\-]+/g, "_");
+  const file = new File(Paths.document, safeName);
+  if (file.exists) {
+    file.delete();
+  }
+  file.create();
+  file.write(base64, { encoding: "base64" });
   if (!(await Sharing.isAvailableAsync())) {
     throw new Error("sharing_unavailable");
   }
-  await Sharing.shareAsync(fileUri, {
+  await Sharing.shareAsync(file.uri, {
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     dialogTitle: "Compartir reporte Excel",
     UTI: "com.microsoft.excel.xlsx",
@@ -1932,9 +1937,13 @@ const renderDeleteConfirmModal = () => {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Viajes");
 
-      const slug = periodDetail.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "");
+      const slug = periodDetail
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
       const stamp = new Date().toISOString().slice(0, 10);
-      await downloadExcelFile(wb, `Reporte_Viajes_${slug}_${stamp}.xlsx`);
+      await downloadExcelFile(wb, `Reporte_Viajes_${slug || "export"}_${stamp}.xlsx`);
 
       Alert.alert(
         "Éxito",
@@ -1945,7 +1954,12 @@ const renderDeleteConfirmModal = () => {
       if (error?.message === "sharing_unavailable") {
         Alert.alert("Error", "No se puede compartir el archivo en este dispositivo");
       } else {
-        Alert.alert("Error", "No se pudo generar el archivo Excel");
+        Alert.alert(
+          "Error",
+          error?.message
+            ? `No se pudo generar el Excel: ${String(error.message).slice(0, 120)}`
+            : "No se pudo generar el archivo Excel"
+        );
       }
     }
   };

@@ -53,14 +53,26 @@ export default function AdminPage() {
   };
   const handleEdit = useCallback((user?: User) => {
     if (user) {
-      const userForEdit = { ...user, password: "" };
+      const apellidoPaterno =
+        user.apellidoPaterno?.trim() ||
+        (user.apellidoMaterno ? "" : user.apellido?.trim() || "");
+      const apellidoMaterno = user.apellidoMaterno?.trim() || "";
+      const userForEdit = {
+        ...user,
+        password: "",
+        apellidoPaterno,
+        apellidoMaterno,
+        apellido: [apellidoPaterno, apellidoMaterno].filter(Boolean).join(" "),
+      };
       setEditingUser(userForEdit);
-      setInitialUserSnapshot({ ...user, password: "" });
+      setInitialUserSnapshot({ ...userForEdit });
       setIsAdding(false);
     } else {
       const newUser: Partial<User> = {
         nombre: "",
         apellido: "",
+        apellidoPaterno: "",
+        apellidoMaterno: "",
         email: "",
         password: "",
         rol: "Operador",
@@ -78,14 +90,16 @@ export default function AdminPage() {
   const saveChanges = async () => {
     if (!editingUser || saving) return;
     setFormMessage("");
-    const { nombre, apellido, email, password, rol, photoUrl, contacto, _id } = editingUser;
+    const { nombre, apellidoPaterno, apellidoMaterno, email, password, rol, photoUrl, contacto, _id } = editingUser;
 
     const nombreTrim = nombre?.trim();
-    const apellidoTrim = apellido?.trim();
+    const apellidoPaternoTrim = apellidoPaterno?.trim() || "";
+    const apellidoMaternoTrim = apellidoMaterno?.trim() || "";
+    const apellidoTrim = [apellidoPaternoTrim, apellidoMaternoTrim].filter(Boolean).join(" ");
     const contactoTrim = contacto?.trim();
 
-    if (!nombreTrim || !apellidoTrim || !rol) {
-      setFormMessage("Nombre, apellido y rol son obligatorios.");
+    if (!nombreTrim || !apellidoPaternoTrim || !rol) {
+      setFormMessage("Nombre, apellido paterno y rol son obligatorios.");
       return;
     }
 
@@ -115,6 +129,8 @@ export default function AdminPage() {
         await api.post("/users", {
           nombre: nombreTrim,
           apellido: apellidoTrim,
+          apellidoPaterno: apellidoPaternoTrim,
+          apellidoMaterno: apellidoMaternoTrim,
           email: email.trim().toLowerCase(),
           password: password.trim(),
           rol,
@@ -125,7 +141,14 @@ export default function AdminPage() {
       } else {
         const changedFields: Partial<User> = {};
         if (nombreTrim !== initialUserSnapshot.nombre?.trim()) changedFields.nombre = nombreTrim;
-        if (apellidoTrim !== initialUserSnapshot.apellido?.trim()) changedFields.apellido = apellidoTrim;
+        if (
+          apellidoPaternoTrim !== (initialUserSnapshot.apellidoPaterno?.trim() || "") ||
+          apellidoMaternoTrim !== (initialUserSnapshot.apellidoMaterno?.trim() || "")
+        ) {
+          changedFields.apellidoPaterno = apellidoPaternoTrim;
+          changedFields.apellidoMaterno = apellidoMaternoTrim;
+          changedFields.apellido = apellidoTrim;
+        }
         if ((email?.trim() || "") !== (initialUserSnapshot.email?.trim() || "")) {
           changedFields.email = email?.trim().toLowerCase() || "";
         }
@@ -370,23 +393,48 @@ export default function AdminPage() {
       </View>
 
       <View style={styles.modalBody}>
+        <View style={styles.fieldGroup}>
+          {renderField("Nombre", (
+            <TextInput
+              placeholder="Nombre"
+              value={editingUser?.nombre ?? ""}
+              onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, nombre: text })}
+              {...inputProps}
+            />
+          ))}
+        </View>
+
         <View style={styles.fieldRow}>
           <View style={styles.fieldHalf}>
-            {renderField("Nombre", (
+            {renderField("Apellido paterno", (
               <TextInput
-                placeholder="Nombre"
-                value={editingUser?.nombre ?? ""}
-                onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, nombre: text })}
+                placeholder="Apellido paterno"
+                value={editingUser?.apellidoPaterno ?? ""}
+                onChangeText={(text) =>
+                  editingUser &&
+                  setEditingUser({
+                    ...editingUser,
+                    apellidoPaterno: text,
+                    apellido: [text, editingUser.apellidoMaterno].filter(Boolean).join(" ").trim(),
+                  })
+                }
                 {...inputProps}
               />
             ))}
           </View>
           <View style={styles.fieldHalf}>
-            {renderField("Apellido", (
+            {renderField("Apellido materno", (
               <TextInput
-                placeholder="Apellido"
-                value={editingUser?.apellido ?? ""}
-                onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, apellido: text })}
+                placeholder="Apellido materno"
+                value={editingUser?.apellidoMaterno ?? ""}
+                onChangeText={(text) =>
+                  editingUser &&
+                  setEditingUser({
+                    ...editingUser,
+                    apellidoMaterno: text,
+                    apellido: [editingUser.apellidoPaterno, text].filter(Boolean).join(" ").trim(),
+                  })
+                }
                 {...inputProps}
               />
             ))}

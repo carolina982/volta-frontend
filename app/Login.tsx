@@ -164,6 +164,8 @@ export default function Login() {
           id: String(userId || data.user._id),
           nombre: data.user.nombre,
           apellido: data.user.apellido,
+          apellidoPaterno: data.user.apellidoPaterno || "",
+          apellidoMaterno: data.user.apellidoMaterno || "",
           email: data.user.email,
           rol: data.user.rol,
           photoUrl: data.user.photoUrl,

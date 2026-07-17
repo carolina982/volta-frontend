@@ -3,7 +3,10 @@ export interface User {
     _id: string;
     id:string;
     nombre:string;
+    /** Apellido completo (paterno + materno). Compatibilidad con pantallas existentes. */
     apellido:string;
+    apellidoPaterno?: string;
+    apellidoMaterno?: string;
     contacto:string;
     email:string ;
     password?:string ;
