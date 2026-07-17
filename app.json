@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Volta-frontend",
-    "slug": "Volta-fontend",
+    "name": "Volta App",
+    "slug": "volta",
     "version": "1.0.0",
     "orientation": "portrait",
     "platforms": [
@@ -9,7 +9,7 @@
       "android",
       "web"
     ],
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/volta-app-icon.png",
     "scheme": "voltaapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -31,17 +31,17 @@
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
-        "READ_MEDIA_IMAGES"
+        "READ_MEDIA_IMAGES",
+        "POST_NOTIFICATIONS"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#ffffff",
+        "foregroundImage": "./assets/images/volta-app-icon.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.Voltaapp"
+      "package": "com.volta.app",
+      "versionCode": 1
     },
     "web": {
       "bundler": "metro",
@@ -79,6 +79,11 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "80d6f40f-ec7c-4d40-9fb7-f3d8f8dd3720"
+      }
     }
   }
 }

@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -88,6 +89,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
   const [isSaving, setIsSaving] = useState(false);
   const [formMessage, setFormMessage] = useState("");
   const [formOk, setFormOk] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const displayRole = currentUser?.rol || "Usuario";
   const roleKey = displayRole.toLowerCase();
@@ -110,6 +112,20 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     setFormMessage("");
     setFormOk(false);
   }, [currentUser]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSub = Keyboard.addListener(showEvt, (e) => {
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const notify = (title: string, message: string) => {
     if (Platform.OS === "web") {
@@ -396,14 +412,15 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 88 : 24}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 88 : 0}
     >
       <ScrollView
         style={styles.flex}
         contentContainerStyle={[
           styles.scrollContent,
           isMobile && styles.scrollContentMobile,
+          keyboardHeight > 0 && { paddingBottom: keyboardHeight + 48 },
         ]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"

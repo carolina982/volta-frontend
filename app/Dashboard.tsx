@@ -28,7 +28,7 @@ import HomePage from "./HomePage";
 import PerfilePage from "./PerfilePage";
 import TripsPage from "./TripsPage";
 import UnitsPage from "./UnitsPage";
-import ViaticsPage from "./ViaticsPage";
+import ViaticsPage from "./GastosPage";
 
 type TabType = "Inicio" | "Viajes" | "Gastos" | "Perfil" | "Unidades" | "Usuarios";
 
@@ -214,6 +214,9 @@ export default function Dashboard() {
   const resolvedPhotoUrl = resolvePhotoUrl(currentUser?.photoUrl);
   const userInitials = `${currentUser?.nombre?.[0] || "U"}${currentUser?.apellido?.[0] || ""}`.toUpperCase();
   const userFullName = [currentUser?.nombre, currentUser?.apellido].filter(Boolean).join(" ");
+  const userRoleShort = String(currentUser?.rol || "Usuario")
+    .replace(/Ayudante General/i, "Ayudante")
+    .trim();
   const {
     unreadCount,
     items: notifications,
@@ -224,7 +227,7 @@ export default function Dashboard() {
     refreshUnread,
   } = useNotifications(Boolean(currentUser));
 
-  usePushNotifications(Boolean(currentUser));
+  usePushNotifications(Boolean(currentUser), refreshUnread);
 
   useEffect(() => {
     const loadCounts = async () => {
@@ -290,7 +293,9 @@ export default function Dashboard() {
       case "Perfil":
         return <PerfilePage currentUser={currentUser} setCurrentUser={setCurrentUser} />;
       case "Unidades":
-        return currentUser.rol?.toLowerCase() === "admin" ? <UnitsPage /> : null;
+        return currentUser.rol?.toLowerCase() === "admin" ? (
+          <UnitsPage currentUser={currentUser} />
+        ) : null;
       case "Usuarios":
         return currentUser.rol?.toLowerCase() === "admin" ? <AdminPage /> : null;
       default:
@@ -545,7 +550,7 @@ export default function Dashboard() {
                       {userFullName || "Usuario"}
                     </Text>
                     <View style={styles.headerRoleBadge}>
-                      <Text style={styles.headerRoleText}>{currentUser.rol || "Usuario"}</Text>
+                      <Text style={styles.headerRoleText}>{userRoleShort}</Text>
                     </View>
                   </View>
                   <UserAvatar uri={resolvedPhotoUrl} initials={userInitials} size={40} />
@@ -571,23 +576,33 @@ export default function Dashboard() {
           {/* ================= HEADER MOVIL ================= */}
           <Appbar.Header style={styles.mobileAppbar}>
             <Appbar.Action icon="menu" color="#111111" onPress={openMobileMenu} />
-            <Appbar.Content title={tab} titleStyle={styles.mobileHeaderTitle} />
+            <Appbar.Content
+              title={tab}
+              titleStyle={styles.mobileHeaderTitle}
+              style={styles.mobileHeaderTitleWrap}
+            />
             <View style={styles.mobileHeaderActions}>
               {renderNotificationBell(true)}
               <TouchableOpacity
                 style={styles.mobileHeaderUserChip}
-                onPress={() => { handleTabPress("Perfil"); if (menuVisible) closeMobileMenu(); }}
+                onPress={() => {
+                  handleTabPress("Perfil");
+                  if (menuVisible) closeMobileMenu();
+                }}
                 activeOpacity={0.85}
+                accessibilityLabel={`Perfil de ${userFullName || "Usuario"}`}
               >
                 <View style={styles.mobileHeaderUserText}>
-                  <Text numberOfLines={1} style={styles.mobileHeaderUserName}>
+                  <Text numberOfLines={2} style={styles.mobileHeaderUserName}>
                     {userFullName || "Usuario"}
                   </Text>
-                  <Text numberOfLines={1} style={styles.mobileHeaderUserRole}>
-                    {currentUser.rol || "Usuario"}
-                  </Text>
+                  <View style={styles.mobileHeaderRoleBadge}>
+                    <Text numberOfLines={1} style={styles.mobileHeaderRoleText}>
+                      {userRoleShort}
+                    </Text>
+                  </View>
                 </View>
-                <UserAvatar uri={resolvedPhotoUrl} initials={userInitials} size={34} />
+                <UserAvatar uri={resolvedPhotoUrl} initials={userInitials} size={36} />
               </TouchableOpacity>
             </View>
           </Appbar.Header>
@@ -1080,30 +1095,39 @@ const styles = StyleSheet.create({
     elevation: 0,
     justifyContent: "space-between",
     alignItems: "center",
+    minHeight: 64,
+  },
+  mobileHeaderTitleWrap: {
+    flex: 0.55,
+    marginHorizontal: 0,
   },
   mobileHeaderTitle: {
     fontWeight: "800",
-    fontSize: 17,
+    fontSize: 15,
     color: "#111111",
   },
   mobileHeaderActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    marginRight: 4,
+    gap: 6,
+    marginRight: 6,
+    flexShrink: 1,
+    maxWidth: "62%",
   },
   mobileHeaderUserChip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingVertical: 4,
-    paddingLeft: 10,
-    paddingRight: 4,
+    gap: 10,
+    paddingVertical: 5,
+    paddingLeft: 12,
+    paddingRight: 5,
     backgroundColor: "#f8fafc",
     borderRadius: 999,
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    maxWidth: 168,
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: 220,
   },
   mobileHeaderUserText: {
     flexShrink: 1,
@@ -1114,6 +1138,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     color: "#111111",
+    textAlign: "right",
+    lineHeight: 15,
+  },
+  mobileHeaderRoleBadge: {
+    marginTop: 3,
+    alignSelf: "flex-end",
+    backgroundColor: "#111111",
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  mobileHeaderRoleText: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#ffffff",
+    letterSpacing: 0.2,
   },
   mobileHeaderUserRole: {
     fontSize: 10,

@@ -62,11 +62,6 @@ export default function Login() {
     loadRememberedEmail();
   }, []);
 
-  const validateEmail = (text: string) => {
-    const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return regex.test(text);
-  };
-
   const handledLogin = async () => {
     setEmailError("");
     setPasswordError("");
@@ -75,11 +70,8 @@ export default function Login() {
 
     let hasError = false;
 
-    if (!email) {
-      setEmailError("El correo electrónico es requerido.");
-      hasError = true;
-    } else if (!validateEmail(email)) {
-      setEmailError("Por favor ingresa un formato de correo válido.");
+    if (!email.trim()) {
+      setEmailError("Ingresa tu correo o usuario.");
       hasError = true;
     }
 
@@ -102,10 +94,10 @@ export default function Login() {
     try {
       if (rememberMe) {
         if (Platform.OS === "web") {
-          localStorage.setItem("rememberedEmail", email.trim().toLowerCase());
+          localStorage.setItem("rememberedEmail", email.trim());
         } else {
           if (AsyncStorage && typeof AsyncStorage.setItem === "function") {
-            await AsyncStorage.setItem("rememberedEmail", email.trim().toLowerCase());
+            await AsyncStorage.setItem("rememberedEmail", email.trim());
           }
         }
       } else {
@@ -118,7 +110,8 @@ export default function Login() {
         }
       }
 
-      const payload: any = { email: email.trim().toLowerCase(), password };
+      const identifier = email.trim();
+      const payload: any = { email: identifier, identifier, password };
       if (isTwoFactorRequired) {
         payload.twoFactorCode = twoFactorCode;
       }
@@ -210,10 +203,10 @@ export default function Login() {
 
           {!isTwoFactorRequired ? (
             <>
-              <TextInput placeholder="Correo electrónico"placeholderTextColor="#9ca3af"value={email}
+              <TextInput placeholder="Correo o usuario"placeholderTextColor="#9ca3af"value={email}
                 onChangeText={(text) => { setEmail(text); setEmailError(""); }}
-                keyboardType="email-address"
                 autoCapitalize="none"
+                autoCorrect={false}
                 mode="flat"
                 underlineColor={emailError ? "#dc2626" : "#d1d5db"}
                 activeUnderlineColor={emailError ? "#dc2626" : "#111111"}
@@ -246,7 +239,7 @@ export default function Login() {
               {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
 
               <View style={styles.rememberMeContainer}>
-                <Text style={[styles.rememberMeText, webFont]}>Recordar mi correo</Text>
+                <Text style={[styles.rememberMeText, webFont]}>Recordar mi usuario</Text>
                 <Switch
                   value={rememberMe}
                   onValueChange={setRememberMe}

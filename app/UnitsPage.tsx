@@ -1,16 +1,15 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
-import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Image,
-  Linking,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,9 +17,19 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { TextInput } from "react-native-paper";
+import { Portal, TextInput } from "react-native-paper";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { api, BASE_URL } from "../services/api";
+import SignaturePad, { SignaturePadHandle } from "../components/SignaturePad";
+import { api } from "../services/api";
+
+interface InventarioUnidad {
+  _id: string;
+  contenido: string;
+  firmaUrl: string;
+  operadorNombre: string;
+  creadoPorNombre?: string;
+  fecha: string;
+}
 
 interface Unit {
   id: string;
@@ -31,12 +40,18 @@ interface Unit {
   estado: "Disponible" | "Mantenimiento" | "Ocupado";
   tipoRemolque?: "Lowboy" | "Caja Seca" | "";
   placaRemolque?: string;
-  inventarios?: {
-    _id: string;
-    archivo: string;
-    fecha: string;
-  }[];
+  inventarios?: InventarioUnidad[];
   imagenUrl?: string;
+}
+
+interface UnitsPageProps {
+  currentUser?: {
+    id?: string;
+    _id?: string;
+    nombre?: string;
+    apellido?: string;
+    rol?: string;
+  } | null;
 }
 
 const notify = (title: string, message: string) => {
@@ -58,20 +73,52 @@ const mapUnit = (u: any): Unit => ({
   placaRemolque: u.placaRemolque || "",
   inventarios: (u.inventarios || []).map((inv: any) => ({
     _id: String(inv._id || inv.id),
-    archivo: inv.archivo,
+    contenido: inv.contenido || "",
+    firmaUrl: inv.firmaUrl || "",
+    operadorNombre:
+      inv.operadorNombre ||
+      (inv.operadorId && typeof inv.operadorId === "object"
+        ? `${inv.operadorId.nombre || ""} ${inv.operadorId.apellido || ""}`.trim()
+        : ""),
+    creadoPorNombre: inv.creadoPorNombre || "",
     fecha: inv.fecha,
   })),
   imagenUrl: u.imagenUrl || "",
 });
 
-export default function UnitsPage() {
+/** Miniatura de unidad: muestra el camioncito si no hay foto o si la imagen falla/está subiendo. */
+function UnitThumb({ uri, size = 28 }: { uri?: string; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  if (uri && !failed) {
+    return (
+      <Image
+        source={{ uri }}
+        style={styles.unitImage}
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return (
+    <View style={styles.unitImagePlaceholder}>
+      <FontAwesome5 name="truck" size={size} color="#9ca3af" />
+    </View>
+  );
+}
+
+export default function UnitsPage({ currentUser }: UnitsPageProps) {
   const [units, setUnits] = useState<Unit[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [modalVisible, setModalVisible] = useState(false);
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
   const [saving, setSaving] = useState(false);
-  const [uploadingInv, setUploadingInv] = useState(false);
+
+  // Inventario de entrega (texto + firma)
+  const [inventarioTexto, setInventarioTexto] = useState("");
+  const [invOperadorId, setInvOperadorId] = useState("");
+  const [operadores, setOperadores] = useState<{ id: string; nombre: string }[]>([]);
+  const [savingInv, setSavingInv] = useState(false);
+  const signatureRef = useRef<SignaturePadHandle>(null);
 
   const [nombre, setNombre] = useState("");
   const [placas, setPlacas] = useState("");
@@ -83,22 +130,47 @@ export default function UnitsPage() {
 
   const unidadesConRemolque = ["002", "007"];
   const [mostrarRemolque, setMostrarRemolque] = useState(false);
-  const [pdf, setPdf] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [imagenUrl, setImagenUrl] = useState("");
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteInvConfirmId, setDeleteInvConfirmId] = useState<string | null>(null);
 
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
   useEffect(() => {
     loadUnits();
+    loadOperadores();
   }, []);
+
+  const loadOperadores = async () => {
+    try {
+      const res = await api.get("/users");
+      const ops = (res.data as any[])
+        .filter((u) => {
+          const r = String(u.rol || "").toLowerCase();
+          return r.includes("operador") || r.includes("ayudante");
+        })
+        .map((u) => ({
+          id: String(u._id || u.id),
+          nombre: `${u.nombre || ""} ${u.apellido || ""}`.trim() || "Operador",
+        }));
+      setOperadores(ops);
+    } catch (error) {
+      console.error("Error cargando operadores", error);
+    }
+  };
 
   const loadUnits = async () => {
     setListLoading(true);
     setLoadError("");
     try {
       const res = await api.get("/units");
-      setUnits(res.data.map(mapUnit));
+      const mapped = (res.data as any[])
+        .map(mapUnit)
+        .sort((a, b) =>
+          String(a.nombre).localeCompare(String(b.nombre), "es", { numeric: true })
+        );
+      setUnits(mapped);
     } catch (error) {
       console.error("Error cargando unidades", error);
       setLoadError("No se pudieron cargar las unidades.");
@@ -109,9 +181,10 @@ export default function UnitsPage() {
 
   const closeModal = () => {
     setModalVisible(false);
-    setPdf(null);
     setSaving(false);
-    setUploadingInv(false);
+    setSavingInv(false);
+    setInventarioTexto("");
+    setInvOperadorId("");
   };
 
   const openModal = (unit?: Unit) => {
@@ -138,7 +211,8 @@ export default function UnitsPage() {
       setImagenUrl("");
       setMostrarRemolque(false);
     }
-    setPdf(null);
+    setInventarioTexto("");
+    setInvOperadorId("");
     setModalVisible(true);
   };
 
@@ -176,22 +250,6 @@ export default function UnitsPage() {
     }
   };
 
-  const pickPDF = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: "application/pdf",
-        copyToCacheDirectory: true,
-      });
-      if (result.canceled) return;
-      if (result.assets && result.assets.length > 0) {
-        setPdf(result.assets[0]);
-      }
-    } catch (error) {
-      console.error(error);
-      notify("Error", "No se pudo seleccionar el PDF.");
-    }
-  };
-
   const seleccionarImagenUnidad = async (unitId: string) => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -224,51 +282,164 @@ export default function UnitsPage() {
     }
   };
 
-  const deleteUnit = async (id: string) => {
-    const performDelete = async () => {
-      try {
-        await api.delete(`/units/${id}`);
-        setUnits((prev) => prev.filter((u) => u.id !== id));
-        notify("Listo", "Unidad eliminada correctamente.");
-      } catch (error) {
-        console.error("Error eliminando unidad", error);
-        notify("Error", "No se pudo eliminar la unidad.");
-      }
-    };
-    if (Platform.OS === "web") {
-      const confirmed = window.confirm(
-        "¿Está seguro de que desea eliminar esta unidad? Esta acción no se puede deshacer."
-      );
-      if (confirmed) await performDelete();
-    } else {
-      Alert.alert(
-        "Confirmar eliminación",
-        "¿Deseas eliminar esta unidad permanentemente?",
-        [
-          { text: "Cancelar", style: "cancel" },
-          { text: "Eliminar", style: "destructive", onPress: () => { void performDelete(); } },
-        ],
-        { cancelable: true }
-      );
+  // Modal propio: Alert.alert / window.confirm fallan o no se ven bien en Expo web/móvil
+  const deleteUnit = (id: string) => {
+    setDeleteConfirmId(String(id));
+  };
+
+  const proceedDeleteUnit = async () => {
+    const id = deleteConfirmId;
+    if (!id) return;
+    setDeleteConfirmId(null);
+    try {
+      await api.delete(`/units/${id}`);
+      setUnits((prev) => prev.filter((u) => u.id !== id));
+      notify("Listo", "Unidad eliminada correctamente.");
+    } catch (error) {
+      console.error("Error eliminando unidad", error);
+      notify("Error", "No se pudo eliminar la unidad.");
     }
   };
 
-  const refreshEditingUnit = async (unitId: string, inventariosFromResponse?: any[]) => {
-    if (inventariosFromResponse) {
-      setEditingUnit((prev) =>
-        prev
-          ? {
-              ...prev,
-              inventarios: inventariosFromResponse.map((inv: any) => ({
-                _id: String(inv._id || inv.id),
-                archivo: inv.archivo,
-                fecha: inv.fecha,
-              })),
-            }
-          : prev
-      );
-      return;
+  const closeDeleteConfirm = () => setDeleteConfirmId(null);
+
+  const deleteInventario = (inventarioId: string) => {
+    setDeleteInvConfirmId(String(inventarioId));
+  };
+
+  const proceedDeleteInventario = async () => {
+    const inventarioId = deleteInvConfirmId;
+    if (!inventarioId || !editingUnit) return;
+    setDeleteInvConfirmId(null);
+    try {
+      await api.delete(`/units/${editingUnit.id}/inventarios/${inventarioId}`);
+      await refreshEditingUnit(editingUnit.id);
+      await loadUnits();
+      notify("Listo", "Inventario eliminado correctamente.");
+    } catch (error) {
+      console.error("Error eliminando inventario", error);
+      notify("Error", "No se pudo eliminar el inventario.");
     }
+  };
+
+  const closeDeleteInvConfirm = () => setDeleteInvConfirmId(null);
+
+  const renderDeleteInvConfirmModal = () => {
+    if (!deleteInvConfirmId) return null;
+
+    const card = (
+      <View
+        style={[styles.confirmCard, isMobile && styles.confirmCardMobile]}
+        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+      >
+        <View style={styles.confirmIconBadge}>
+          <FontAwesome5 name="trash-alt" size={18} color="#ffffff" />
+        </View>
+        <Text style={styles.confirmTitle}>Eliminar inventario</Text>
+        <Text style={styles.confirmMessage}>
+          ¿Estás seguro de que deseas eliminar este inventario? Esta acción no se puede
+          deshacer.
+        </Text>
+        <View style={styles.confirmActions}>
+          <TouchableOpacity
+            style={styles.confirmCancelBtn}
+            onPress={closeDeleteInvConfirm}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.confirmCancelText}>Cancelar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.confirmDeleteBtn}
+            onPress={() => {
+              void proceedDeleteInventario();
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.confirmDeleteText}>Eliminar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+
+    const overlay = (
+      <View
+        style={[styles.confirmOverlay, styles.confirmOverlayWeb]}
+        pointerEvents="box-none"
+      >
+        <Pressable style={styles.confirmBackdrop} onPress={closeDeleteInvConfirm} />
+        {card}
+      </View>
+    );
+
+    if (Platform.OS === "web") {
+      return <Portal>{overlay}</Portal>;
+    }
+
+    return (
+      <Modal visible transparent animationType="fade" onRequestClose={closeDeleteInvConfirm}>
+        {overlay}
+      </Modal>
+    );
+  };
+
+  const renderDeleteConfirmModal = () => {
+    if (!deleteConfirmId) return null;
+
+    const card = (
+      <View
+        style={[styles.confirmCard, isMobile && styles.confirmCardMobile]}
+        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+      >
+        <View style={styles.confirmIconBadge}>
+          <FontAwesome5 name="trash-alt" size={18} color="#ffffff" />
+        </View>
+        <Text style={styles.confirmTitle}>Eliminar unidad</Text>
+        <Text style={styles.confirmMessage}>
+          ¿Estás seguro de que deseas eliminar esta unidad? Esta acción no se puede deshacer.
+        </Text>
+        <View style={styles.confirmActions}>
+          <TouchableOpacity
+            style={styles.confirmCancelBtn}
+            onPress={closeDeleteConfirm}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.confirmCancelText}>Cancelar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.confirmDeleteBtn}
+            onPress={() => {
+              void proceedDeleteUnit();
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.confirmDeleteText}>Eliminar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+
+    const overlay = (
+      <View
+        style={[styles.confirmOverlay, styles.confirmOverlayWeb]}
+        pointerEvents="box-none"
+      >
+        <Pressable style={styles.confirmBackdrop} onPress={closeDeleteConfirm} />
+        {card}
+      </View>
+    );
+
+    if (Platform.OS === "web") {
+      return <Portal>{overlay}</Portal>;
+    }
+
+    return (
+      <Modal visible transparent animationType="fade" onRequestClose={closeDeleteConfirm}>
+        {overlay}
+      </Modal>
+    );
+  };
+
+  const refreshEditingUnit = async (unitId: string) => {
     try {
       const res = await api.get(`/units/${unitId}`);
       setEditingUnit(mapUnit(res.data));
@@ -277,96 +448,68 @@ export default function UnitsPage() {
     }
   };
 
-  const subirInventario = async () => {
-    if (!pdf) {
-      notify("Falta archivo", "Selecciona un PDF de inventario.");
-      return;
-    }
+  const guardarInventario = async () => {
     if (!editingUnit) {
-      notify("Guarda primero", "Guarda la unidad antes de subir inventario.");
+      notify("Guarda primero", "Guarda la unidad antes de crear un inventario.");
+      return;
+    }
+    if (!inventarioTexto.trim()) {
+      notify("Falta contenido", "Escribe el contenido del inventario.");
+      return;
+    }
+    if (!invOperadorId) {
+      notify("Falta operador", "Selecciona el operador que recibe la unidad.");
       return;
     }
 
-    setUploadingInv(true);
+    let firma = "";
     try {
-      const formData = new FormData();
-      const fileName = pdf.name || `inventario_${Date.now()}.pdf`;
-      const mimeType = pdf.mimeType || "application/pdf";
+      firma = (await signatureRef.current?.getData()) || "";
+    } catch (error) {
+      console.error("Error leyendo firma", error);
+    }
+    if (!firma) {
+      notify("Falta firma", "Captura la firma antes de guardar.");
+      return;
+    }
 
-      if (Platform.OS === "web") {
-        const response = await fetch(pdf.uri);
-        const blob = await response.blob();
-        formData.append("file", blob, fileName);
-      } else {
-        formData.append("file", {
-          uri: pdf.uri,
-          name: fileName,
-          type: mimeType,
-        } as any);
-      }
-
-      const res = await api.post(`/units/${editingUnit.id}/inventario`, formData);
-      await refreshEditingUnit(editingUnit.id, res.data?.inventarios);
-      setPdf(null);
+    setSavingInv(true);
+    try {
+      await api.post(`/units/${editingUnit.id}/inventarios`, {
+        contenido: inventarioTexto.trim(),
+        operadorId: invOperadorId,
+        firmaBase64: firma,
+      });
+      await refreshEditingUnit(editingUnit.id);
       await loadUnits();
-      notify("Listo", "Inventario subido correctamente.");
+      setInventarioTexto("");
+      setInvOperadorId("");
+      signatureRef.current?.clear();
+      notify("Listo", "Inventario guardado correctamente.");
     } catch (error: any) {
-      console.error("Error subiendo inventario", error);
+      console.error("Error guardando inventario", error);
       const msg =
         error?.response?.data?.error ||
         error?.response?.data?.message ||
-        "No se pudo subir el inventario.";
+        "No se pudo guardar el inventario.";
       notify("Error", String(msg));
     } finally {
-      setUploadingInv(false);
+      setSavingInv(false);
     }
   };
 
-  const eliminarInventario = async (inventarioId: string) => {
-    if (!editingUnit) return;
-
-    const performDelete = async () => {
-      try {
-        const res = await api.delete(`/units/${editingUnit.id}/inventarios/${inventarioId}`);
-        await refreshEditingUnit(editingUnit.id, res.data?.inventarios);
-        await loadUnits();
-        notify("Listo", "Inventario eliminado.");
-      } catch (error) {
-        console.error(error);
-        notify("Error", "No se pudo eliminar el inventario.");
-      }
-    };
-
-    if (Platform.OS === "web") {
-      if (window.confirm("¿Eliminar este PDF de inventario?")) await performDelete();
-    } else {
-      Alert.alert("Confirmar eliminación", "¿Eliminar este PDF de inventario?", [
-        { text: "Cancelar", style: "cancel" },
-        { text: "Eliminar", style: "destructive", onPress: () => { void performDelete(); } },
-      ]);
-    }
-  };
-
-  const abrirPDF = async (url: string) => {
+  const formatInvFecha = (fecha?: string) => {
+    if (!fecha) return "Sin fecha";
     try {
-      let fileUrl = url;
-      if (!fileUrl.startsWith("http")) {
-        const origin = BASE_URL.replace(/\/api\/?$/, "");
-        fileUrl = `${origin}${fileUrl.startsWith("/") ? "" : "/"}${fileUrl}`;
-      }
-      if (Platform.OS === "web") {
-        window.open(fileUrl, "_blank");
-      } else {
-        const supported = await Linking.canOpenURL(fileUrl);
-        if (supported) {
-          await Linking.openURL(fileUrl);
-        } else {
-          notify("Error", "No se puede abrir este PDF en el dispositivo.");
-        }
-      }
-    } catch (error) {
-      console.error(error);
-      notify("Error", "No se pudo abrir el PDF.");
+      return new Date(fecha).toLocaleString("es-MX", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return "Sin fecha";
     }
   };
 
@@ -407,13 +550,7 @@ export default function UnitsPage() {
           onPress={() => seleccionarImagenUnidad(item.id)}
           activeOpacity={0.85}
         >
-          {item.imagenUrl ? (
-            <Image source={{ uri: item.imagenUrl }} style={styles.unitImage} />
-          ) : (
-            <View style={styles.unitImagePlaceholder}>
-              <FontAwesome5 name="truck" size={28} color="#9ca3af" />
-            </View>
-          )}
+          <UnitThumb uri={item.imagenUrl} />
           <View style={styles.photoBadge}>
             <FontAwesome5 name="camera" size={10} color="#ffffff" />
           </View>
@@ -677,8 +814,8 @@ export default function UnitsPage() {
               <View style={[styles.formSection, isMobile && styles.formSectionMobile]}>
                 <View style={styles.invSectionHeader}>
                   <View style={styles.invSectionHeaderLeft}>
-                    <FontAwesome5 name="file-pdf" size={14} color="#111111" />
-                    <Text style={styles.formSectionTitleInline}>Inventario PDF</Text>
+                    <FontAwesome5 name="clipboard-list" size={14} color="#111111" />
+                    <Text style={styles.formSectionTitleInline}>Inventario de la unidad</Text>
                   </View>
                   {editingUnit?.inventarios?.length ? (
                     <View style={styles.invCountPill}>
@@ -689,98 +826,136 @@ export default function UnitsPage() {
 
                 {!editingUnit ? (
                   <Text style={styles.invHint}>
-                    Guarda la unidad primero. Después podrás subir el PDF de inventario.
+                    Guarda la unidad primero. Después podrás crear inventarios de entrega.
                   </Text>
                 ) : (
                   <>
                     <Text style={styles.invHint}>
-                      Selecciona un PDF y súbelo. Puedes agregar varios archivos.
+                      Registra la entrega: describe el contenido, elige el operador y firma. Cada
+                      registro se guarda en el historial y no se sobrescribe.
                     </Text>
 
-                    <TouchableOpacity style={styles.pickPdfBtn} onPress={pickPDF} activeOpacity={0.85}>
-                      <FontAwesome5 name="paperclip" size={13} color="#111111" />
-                      <Text style={styles.pickPdfBtnText}>
-                        {pdf ? "Cambiar PDF" : "Seleccionar PDF"}
-                      </Text>
-                    </TouchableOpacity>
+                    <Text style={styles.invFieldLabel}>Operador que recibe la unidad</Text>
+                    <View style={styles.invPickerWrapper}>
+                      <Picker
+                        selectedValue={invOperadorId}
+                        onValueChange={(v) => setInvOperadorId(String(v))}
+                        style={styles.invPicker}
+                      >
+                        <Picker.Item label="Selecciona un operador…" value="" />
+                        {operadores.map((op) => (
+                          <Picker.Item key={op.id} label={op.nombre} value={op.id} />
+                        ))}
+                      </Picker>
+                    </View>
 
-                    {pdf ? (
-                      <View style={styles.selectedFileRow}>
-                        <FontAwesome5 name="file-pdf" size={16} color="#dc2626" />
-                        <Text style={styles.selectedFileName} numberOfLines={2}>
-                          {pdf.name || "archivo.pdf"}
-                        </Text>
-                        <TouchableOpacity onPress={() => setPdf(null)} hitSlop={8}>
-                          <FontAwesome5 name="times" size={14} color="#6b7280" />
-                        </TouchableOpacity>
-                      </View>
-                    ) : null}
+                    <Text style={styles.invFieldLabel}>Contenido del inventario</Text>
+                    <TextInput
+                      mode="outlined"
+                      value={inventarioTexto}
+                      onChangeText={setInventarioTexto}
+                      placeholder="Describe todo el contenido y estado de la unidad…"
+                      multiline
+                      numberOfLines={6}
+                      style={styles.invTextArea}
+                      outlineColor="#e5e7eb"
+                      activeOutlineColor="#111111"
+                    />
+
+                    <View style={styles.invSignHeaderRow}>
+                      <Text style={styles.invFieldLabel}>Firma digital</Text>
+                      <TouchableOpacity onPress={() => signatureRef.current?.clear()} hitSlop={8}>
+                        <Text style={styles.invClearSign}>Limpiar firma</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <SignaturePad ref={signatureRef} height={180} />
+
+                    <View style={styles.invAutoInfo}>
+                      <Text style={styles.invAutoInfoText}>
+                        <Text style={styles.invAutoInfoLabel}>Registrado por: </Text>
+                        {`${currentUser?.nombre || ""} ${currentUser?.apellido || ""}`.trim() ||
+                          "Administrador"}
+                      </Text>
+                      <Text style={styles.invAutoInfoText}>
+                        <Text style={styles.invAutoInfoLabel}>Fecha y hora: </Text>
+                        se registran automáticamente al guardar.
+                      </Text>
+                    </View>
 
                     <TouchableOpacity
-                      style={[
-                        styles.uploadInvBtn,
-                        (!pdf || uploadingInv) && styles.uploadInvBtnDisabled,
-                      ]}
+                      style={[styles.uploadInvBtn, savingInv && styles.uploadInvBtnDisabled]}
                       onPress={() => {
-                        void subirInventario();
+                        void guardarInventario();
                       }}
-                      disabled={!pdf || uploadingInv}
+                      disabled={savingInv}
                       activeOpacity={0.85}
                     >
-                      {uploadingInv ? (
+                      {savingInv ? (
                         <ActivityIndicator color="#ffffff" />
                       ) : (
                         <>
-                          <FontAwesome5 name="cloud-upload-alt" size={14} color="#ffffff" />
-                          <Text style={styles.uploadInvBtnText}>Subir inventario</Text>
+                          <FontAwesome5 name="save" size={14} color="#ffffff" />
+                          <Text style={styles.uploadInvBtnText}>Guardar inventario</Text>
                         </>
                       )}
                     </TouchableOpacity>
 
+                    <Text style={styles.invHistoryTitle}>Historial de inventarios</Text>
                     {(editingUnit.inventarios || []).length === 0 ? (
                       <View style={styles.invEmpty}>
                         <FontAwesome5 name="folder-open" size={18} color="#9ca3af" />
-                        <Text style={styles.invEmptyText}>Aún no hay inventarios cargados</Text>
+                        <Text style={styles.invEmptyText}>Aún no hay inventarios registrados</Text>
                       </View>
                     ) : (
                       <View style={styles.invList}>
-                        {(editingUnit.inventarios || []).map((inv, index) => (
-                          <View key={inv._id || String(index)} style={styles.invCard}>
-                            <View style={styles.invCardIcon}>
-                              <FontAwesome5 name="file-pdf" size={16} color="#dc2626" />
+                        {[...(editingUnit.inventarios || [])]
+                          .sort(
+                            (a, b) =>
+                              new Date(b.fecha).getTime() - new Date(a.fecha).getTime()
+                          )
+                          .map((inv, index) => (
+                            <View key={inv._id || String(index)} style={styles.invHistoryCard}>
+                              <View style={styles.invHistoryHeader}>
+                                <View style={styles.invHistoryHeaderLeft}>
+                                  <FontAwesome5
+                                    name="clipboard-check"
+                                    size={14}
+                                    color="#111111"
+                                  />
+                                  <Text style={styles.invHistoryDate}>
+                                    {formatInvFecha(inv.fecha)}
+                                  </Text>
+                                </View>
+                                <TouchableOpacity
+                                  style={styles.invDeleteBtn}
+                                  onPress={() => deleteInventario(inv._id)}
+                                  activeOpacity={0.85}
+                                  hitSlop={8}
+                                >
+                                  <FontAwesome5 name="trash-alt" size={13} color="#dc2626" />
+                                </TouchableOpacity>
+                              </View>
+                              {inv.operadorNombre ? (
+                                <Text style={styles.invHistoryMeta}>
+                                  <Text style={styles.invAutoInfoLabel}>Operador: </Text>
+                                  {inv.operadorNombre}
+                                </Text>
+                              ) : null}
+                              <Text style={styles.invHistoryContent}>{inv.contenido}</Text>
+                              {inv.firmaUrl ? (
+                                <Image
+                                  source={{ uri: inv.firmaUrl }}
+                                  style={styles.invHistorySignature}
+                                  resizeMode="contain"
+                                />
+                              ) : null}
+                              {inv.creadoPorNombre ? (
+                                <Text style={styles.invHistoryBy}>
+                                  Registrado por {inv.creadoPorNombre}
+                                </Text>
+                              ) : null}
                             </View>
-                            <View style={styles.invCardBody}>
-                              <Text style={styles.invCardTitle}>Inventario {index + 1}</Text>
-                              <Text style={styles.invCardMeta}>
-                                {inv.fecha
-                                  ? new Date(inv.fecha).toLocaleDateString("es-MX", {
-                                      day: "2-digit",
-                                      month: "short",
-                                      year: "numeric",
-                                    })
-                                  : "Sin fecha"}
-                              </Text>
-                            </View>
-                            <TouchableOpacity
-                              style={styles.invActionBtn}
-                              onPress={() => {
-                                void abrirPDF(inv.archivo);
-                              }}
-                              activeOpacity={0.85}
-                            >
-                              <FontAwesome5 name="eye" size={12} color="#111111" />
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={[styles.invActionBtn, styles.invActionBtnDanger]}
-                              onPress={() => {
-                                void eliminarInventario(inv._id);
-                              }}
-                              activeOpacity={0.85}
-                            >
-                              <FontAwesome5 name="trash-alt" size={12} color="#dc2626" />
-                            </TouchableOpacity>
-                          </View>
-                        ))}
+                          ))}
                       </View>
                     )}
                   </>
@@ -844,12 +1019,111 @@ export default function UnitsPage() {
           </SafeAreaView>
         </View>
       </Modal>
+
+      {renderDeleteConfirmModal()}
+      {renderDeleteInvConfirmModal()}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, paddingVertical: 4, backgroundColor: "transparent" },
+  confirmOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  confirmOverlayWeb: {
+    ...StyleSheet.absoluteFillObject,
+    position: "fixed" as any,
+    zIndex: 10050,
+  },
+  confirmBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15, 23, 42, 0.5)",
+  },
+  confirmCard: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: "#ffffff",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 22,
+    alignItems: "center",
+    gap: 12,
+    zIndex: 1,
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 20px 48px rgba(0,0,0,0.18)" as any }
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.18,
+          shadowRadius: 20,
+          shadowOffset: { width: 0, height: 10 },
+          elevation: 14,
+        }),
+  },
+  confirmCardMobile: {
+    maxWidth: "100%",
+    padding: 18,
+  },
+  confirmIconBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "#dc2626",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  confirmTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111111",
+    textAlign: "center",
+  },
+  confirmMessage: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#6b7280",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  confirmActions: {
+    flexDirection: "row",
+    gap: 10,
+    width: "100%",
+    marginTop: 8,
+  },
+  confirmCancelBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmCancelText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#374151",
+  },
+  confirmDeleteBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 999,
+    backgroundColor: "#dc2626",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmDeleteText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#ffffff",
+  },
   pageHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -1204,6 +1478,96 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
   },
   invEmptyText: { fontSize: 13, color: "#9ca3af", fontWeight: "600" },
+  invFieldLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#374151",
+    marginBottom: 6,
+    marginTop: 4,
+  },
+  invPickerWrapper: {
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+    marginBottom: 12,
+    overflow: "hidden",
+  },
+  invPicker: { width: "100%", color: "#111111" },
+  invTextArea: {
+    backgroundColor: "#ffffff",
+    minHeight: 120,
+    marginBottom: 12,
+  },
+  invSignHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 4,
+  },
+  invClearSign: { fontSize: 13, fontWeight: "700", color: "#2563eb" },
+  invAutoInfo: {
+    marginTop: 10,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    gap: 4,
+  },
+  invAutoInfoText: { fontSize: 12.5, color: "#374151", lineHeight: 18 },
+  invAutoInfoLabel: { fontWeight: "800", color: "#111111" },
+  invHistoryTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#111111",
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  invHistoryCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
+    gap: 6,
+  },
+  invHistoryHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  invHistoryHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 },
+  invDeleteBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    backgroundColor: "#fef2f2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  invHistoryDate: { fontSize: 13, fontWeight: "800", color: "#111111" },
+  invHistoryMeta: { fontSize: 12.5, color: "#374151" },
+  invHistoryContent: {
+    fontSize: 13,
+    color: "#111111",
+    lineHeight: 19,
+    marginTop: 2,
+  },
+  invHistorySignature: {
+    width: "100%",
+    height: 120,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+    marginTop: 6,
+  },
+  invHistoryBy: { fontSize: 11.5, color: "#9ca3af", fontWeight: "600", marginTop: 2 },
   invList: { gap: 10 },
   invCard: {
     flexDirection: "row",

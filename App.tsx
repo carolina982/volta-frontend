@@ -17,7 +17,7 @@ import Register from "./app/Register";
 import ResetPassword from "./app/ResetPassword";
 import TripsPage from "./app/TripsPage";
 import UnitsPage from "./app/UnitsPage";
-import ViaticsPage from "./app/ViaticsPage";
+import ViaticsPage from "./app/GastosPage";
 
 const voltaTheme = {
   ...MD3LightTheme,

@@ -1,7 +1,7 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Keyboard, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Portal, TextInput } from "react-native-paper";
 import * as XLSX from "xlsx";
@@ -10,9 +10,9 @@ import { api } from "../services/api";
 
 const START_TRIP_CHECKLIST = [
   { id: "docs", label: "Documentos, licencia y permiso en regla" },
-  { id: "unit", label: "Unidad revisada (luces, llantas, combustible)" },
-  { id: "route", label: "Ruta y destino confirmados" },
-  { id: "safety", label: "Equipo de seguridad / kit listo" },
+  { id: "tires", label: "Llantas en buen estado" },
+  { id: "lights", label: "Luces funcionando (delanteras y traseras)" },
+  { id: "tools", label: "Kit de herramientas" },
 ] as const;
 
 type ChecklistId = (typeof START_TRIP_CHECKLIST)[number]["id"];
@@ -22,6 +22,57 @@ const emptyChecklistState = (): Record<ChecklistId, boolean> =>
     (acc, item) => ({ ...acc, [item.id]: false }),
     {} as Record<ChecklistId, boolean>
   );
+
+/** Checklist de entrega al finalizar (marcar solo lo que se entrega). */
+const FINISH_TRIP_CHECKLIST = [
+  { id: "montacargas", label: "Montacargas" },
+  { id: "alineamientos", label: "Adlinamientos" },
+  { id: "llaves", label: "Llaves de equipo" },
+  { id: "extintores", label: "Extintores" },
+  { id: "cargadores", label: "Cargadores" },
+  { id: "manualesUso", label: "Manuales de uso" },
+  { id: "manualGarantias", label: "Manual de garantías" },
+  { id: "hojaRecepcion", label: "Hoja de recepción" },
+] as const;
+
+type FinishChecklistId = (typeof FINISH_TRIP_CHECKLIST)[number]["id"];
+
+const emptyFinishChecklistState = (): Record<FinishChecklistId, boolean> =>
+  FINISH_TRIP_CHECKLIST.reduce(
+    (acc, item) => ({ ...acc, [item.id]: false }),
+    {} as Record<FinishChecklistId, boolean>
+  );
+
+type ChecklistItemSaved = { id: string; label: string; checked: boolean };
+type ChecklistSaved = {
+  items: ChecklistItemSaved[];
+  extras?: string;
+  completadoEn?: string | null;
+};
+
+const buildChecklistPayload = (
+  defs: readonly { id: string; label: string }[],
+  checked: Record<string, boolean>,
+  extras = ""
+): ChecklistSaved => ({
+  items: defs.map((d) => ({ id: d.id, label: d.label, checked: Boolean(checked[d.id]) })),
+  extras: extras.trim(),
+  completadoEn: new Date().toISOString(),
+});
+
+/** Serializa un checklist guardado a texto legible para el Excel. */
+const formatChecklistForExcel = (checklist?: ChecklistSaved | null): string => {
+  if (!checklist || !Array.isArray(checklist.items)) return "";
+  const marcados = checklist.items
+    .filter((it) => it.checked)
+    .map((it) => it.label);
+  const partes: string[] = [];
+  if (marcados.length) partes.push(marcados.join(", "));
+  if (checklist.extras && checklist.extras.trim()) {
+    partes.push(`Extras: ${checklist.extras.trim()}`);
+  }
+  return partes.join(" | ");
+};
 
 interface KilometrajeRegistro {
   km: string;
@@ -54,6 +105,13 @@ interface Trip {
   destinoExtra?: DestinoExtraTrip[] | DestinoExtraTrip | null;
   destinoActualIndex?: number;
   asignadoPor?: string | { _id: string; nombre?: string; apellido?: string } | null;
+  checklistInicio?: ChecklistSaved | null;
+  checklistRecepcion?: ChecklistSaved | null;
+  checklistFin?: ChecklistSaved | null;
+  checklistParadas?:
+    | (ChecklistSaved & { index?: number; destino?: string; recepcion?: ChecklistSaved | null })[]
+    | null;
+  finalizadoEn?: string | null;
   
   kilometrajeSalida?: { numero: number; descripcion: string }[];
   kilometrajeLlegada?: { numero: number; descripcion: string }[];
@@ -84,8 +142,8 @@ const isUnidadConRemolque = (nombre?: string) =>
 const formatUnitLabel = (u: Unit) => {
   const base = `${u.nombre} ${u.placa}`.trim();
   if (!isUnidadConRemolque(u.nombre)) return base;
-  if (u.tipoRemolque) return `${base} · ${u.tipoRemolque}`;
-  return `${base} · Remolque`;
+  if (u.tipoRemolque) return `${base} · Tractor (${u.tipoRemolque})`;
+  return `${base} · Tractor`;
 };
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -314,6 +372,7 @@ const buildWeekOptions = (center = new Date(), past = 16, future = 4) => {
 
 /** Filtra por día / semana (lun–dom) / mes actual según fecha de salida. */
 const isTripInExportPeriod = (trip: { fechaSalida?: string }, exportType: string) => {
+  if (exportType === "general") return true;
   if (!trip.fechaSalida) return false;
   const date = new Date(trip.fechaSalida);
   if (Number.isNaN(date.getTime())) return false;
@@ -445,7 +504,28 @@ const exportOptions: { value: string; label: string }[] = [
   { value: "dia", label: "Día" },
   { value: "semana", label: "Semana" },
   { value: "mes", label: "Mes" },
+  { value: "general", label: "General" },
 ];
+
+/** Foto de unidad: muestra el camioncito si no hay foto o si la imagen falla/está subiendo. */
+function UnitPhoto({ uri }: { uri?: string }) {
+  const [failed, setFailed] = useState(false);
+  if (uri && !failed) {
+    return (
+      <Image
+        source={{ uri }}
+        style={styles.unitDetailPhoto}
+        resizeMode="cover"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return (
+    <View style={styles.unitDetailPhotoPlaceholder}>
+      <FontAwesome5 name="truck" size={18} color="#6b7280" />
+    </View>
+  );
+}
 
 export default function TripsPage() {
   const { width } = useWindowDimensions();
@@ -500,13 +580,19 @@ export default function TripsPage() {
   const [weekSheetVisible, setWeekSheetVisible] = useState(false);
   const [checklistTrip, setChecklistTrip] = useState<Trip | null>(null);
   const [checklistChecked, setChecklistChecked] = useState<Record<ChecklistId, boolean>>(emptyChecklistState);
+  const [finishChecklistTrip, setFinishChecklistTrip] = useState<Trip | null>(null);
+  const [finishMode, setFinishMode] = useState<
+    "final" | "parada" | "recepcion" | "recepcion-parada"
+  >("final");
+  const [pendingParadaEntrega, setPendingParadaEntrega] = useState<ChecklistSaved | null>(null);
+  const [finishChecklistChecked, setFinishChecklistChecked] = useState<Record<FinishChecklistId, boolean>>(
+    emptyFinishChecklistState
+  );
+  const [finishExtras, setFinishExtras] = useState("");
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [llegadaTouched, setLlegadaTouched] = useState(false);
   const [adminShowForm, setAdminShowForm] = useState(true);
-  const [showLlegadaPicker, setShowLlegadaPicker] = useState(false);
-  const [showSalidaPicker, setShowSalidaPicker] = useState(false);
-  const [showSalidaTimePicker, setShowSalidaTimePicker] = useState(false);
-  const [showLlegadaTimePicker, setShowLlegadaTimePicker] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
   const [unitPlaca, setUnitPlaca] = useState("");
   const [tipoRemolque, setTipoRemolque] = useState("");
@@ -518,10 +604,14 @@ export default function TripsPage() {
   const [liveElapsed, setLiveElapsed] = useState(0);
   const [multidestino, setMultidestino] = useState(false);
   const [destinosExtras, setDestinosExtras] = useState<DestinoExtraForm[]>([]);
-  const [multiPicker, setMultiPicker] = useState<{
-    index: number;
-    field: "salidaDate" | "salidaTime" | "llegadaDate" | "llegadaTime";
+  // Un solo picker activo (fecha u hora) para cualquier campo. En iOS se dibuja
+  // como overlay a nivel del modal (Modal anidado queda oculto en iOS).
+  const [activePicker, setActivePicker] = useState<{
+    mode: "date" | "time";
+    apply: (d: Date) => void;
+    title: string;
   } | null>(null);
+  const [pickerTemp, setPickerTemp] = useState<Date>(new Date());
   const [multiLiveTick, setMultiLiveTick] = useState(0);
   const [selectSheet, setSelectSheet] = useState<SelectSheetState | null>(null);
 
@@ -642,6 +732,11 @@ export default function TripsPage() {
     setSelectSheet(null);
     setChecklistTrip(null);
     setChecklistChecked(emptyChecklistState());
+    setFinishChecklistTrip(null);
+    setFinishMode("final");
+    setFinishChecklistChecked(emptyFinishChecklistState());
+    setFinishExtras("");
+    setActivePicker(null);
     setModalVisible(false);
   }, []);
 
@@ -741,7 +836,7 @@ export default function TripsPage() {
       setHoraLlegada("");
       setMultidestino(false);
       setDestinosExtras([]);
-      setMultiPicker(null);
+      setActivePicker(null);
       setModalVisible(true);
       return;
     }
@@ -807,7 +902,7 @@ export default function TripsPage() {
       setMultidestino(false);
       setDestinosExtras([]);
     }
-    setMultiPicker(null);
+    setActivePicker(null);
     setModalVisible(true);
   }, [units]);
 
@@ -969,16 +1064,18 @@ export default function TripsPage() {
                         </Text>
                       </View>
                     </View>
-                    <View style={styles.sheetStopTimes}>
-                      <View style={styles.sheetStopTimeBlock}>
-                        <Text style={styles.sheetStopTimeLabel}>KM Salida</Text>
-                        <Text style={styles.sheetStopTimeValue}>{stop.kmSalida}</Text>
+                    {isAdmin ? (
+                      <View style={styles.sheetStopTimes}>
+                        <View style={styles.sheetStopTimeBlock}>
+                          <Text style={styles.sheetStopTimeLabel}>KM Salida</Text>
+                          <Text style={styles.sheetStopTimeValue}>{stop.kmSalida}</Text>
+                        </View>
+                        <View style={styles.sheetStopTimeBlock}>
+                          <Text style={styles.sheetStopTimeLabel}>KM Llegada</Text>
+                          <Text style={styles.sheetStopTimeValue}>{stop.kmLlegada}</Text>
+                        </View>
                       </View>
-                      <View style={styles.sheetStopTimeBlock}>
-                        <Text style={styles.sheetStopTimeLabel}>KM Llegada</Text>
-                        <Text style={styles.sheetStopTimeValue}>{stop.kmLlegada}</Text>
-                      </View>
-                    </View>
+                    ) : null}
                     {stop.defEntregado ? (
                       <View style={styles.sheetStopDefRow}>
                         <FontAwesome5 name="gas-pump" size={11} color="#6b7280" />
@@ -1008,20 +1105,21 @@ export default function TripsPage() {
               <Text style={styles.sheetMetaLabel}>Asignado por</Text>
               <Text style={styles.sheetMetaValue}>{asignadoPorNombre}</Text>
             </View>
+            {getTripEstadoKey(liveTrip.estado) === "completado" && liveTrip.finalizadoEn ? (
+              <View style={[styles.sheetMetaItem, styles.sheetMetaItemFull, styles.sheetMetaItemFinish]}>
+                <View style={styles.sheetFinishLabelRow}>
+                  <FontAwesome5 name="flag-checkered" size={11} color="#059669" />
+                  <Text style={styles.sheetMetaLabel}>Viaje finalizado</Text>
+                </View>
+                <Text style={styles.sheetFinishValue}>
+                  {formatDateTimeLabel(liveTrip.finalizadoEn)}
+                </Text>
+              </View>
+            ) : null}
             <View style={[styles.sheetMetaItem, styles.sheetMetaItemFull]}>
               <Text style={styles.sheetMetaLabel}>Unidad</Text>
               <View style={styles.unitDetailRow}>
-                {unitDetail?.imagenUrl ? (
-                  <Image
-                    source={{ uri: unitDetail.imagenUrl }}
-                    style={styles.unitDetailPhoto}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={styles.unitDetailPhotoPlaceholder}>
-                    <FontAwesome5 name="truck" size={18} color="#6b7280" />
-                  </View>
-                )}
+                <UnitPhoto uri={unitDetail?.imagenUrl} />
                 <View style={styles.unitDetailText}>
                   <Text style={styles.unitDetailName}>{unidadNombre}</Text>
                   {unitDetail?.placa ? (
@@ -1032,6 +1130,127 @@ export default function TripsPage() {
             </View>
           </View>
         </View>
+
+        {renderChecklistSummary(
+          "Checklist de inicio",
+          "clipboard-check",
+          "#111111",
+          liveTrip.checklistInicio,
+          "El operador aún no ha iniciado el viaje."
+        )}
+
+        {renderChecklistSummary(
+          "Checklist de recepción",
+          "clipboard-check",
+          "#2563eb",
+          liveTrip.checklistRecepcion,
+          "El operador aún no ha registrado la recepción."
+        )}
+
+        {(liveTrip.checklistParadas || []).map((cl, i) => {
+          const paradaLabel = cl.destino
+            ? ` · ${cl.destino}`
+            : ` ${(cl.index ?? i) + 1}`;
+          return (
+            <React.Fragment key={`parada-${i}`}>
+              {renderChecklistSummary(
+                `Entrega en parada${paradaLabel}`,
+                "map-marker-alt",
+                "#2563eb",
+                cl,
+                "",
+                `parada-entrega-${i}`
+              )}
+              {renderChecklistSummary(
+                `Recepción en parada${paradaLabel}`,
+                "clipboard-check",
+                "#7c3aed",
+                cl.recepcion,
+                "",
+                `parada-recepcion-${i}`
+              )}
+            </React.Fragment>
+          );
+        })}
+
+        {renderChecklistSummary(
+          "Checklist de entrega",
+          "clipboard-list",
+          "#dc2626",
+          liveTrip.checklistFin,
+          "El operador aún no ha finalizado el viaje."
+        )}
+      </View>
+    );
+  };
+
+  /** Resumen de un checklist guardado (solo lectura, para admin en el detalle). */
+  const renderChecklistSummary = (
+    title: string,
+    icon: string,
+    color: string,
+    checklist: ChecklistSaved | null | undefined,
+    emptyLabel: string,
+    key?: string
+  ) => {
+    const items = checklist?.items || [];
+    const extras = (checklist?.extras || "").trim();
+    const hasData = items.length > 0 || Boolean(extras);
+
+    // Para paradas sin datos guardados, no mostrar nada.
+    if (!emptyLabel && !hasData) return null;
+
+    return (
+      <View key={key} style={styles.sheetSection}>
+        <View style={styles.checklistSummaryTitleRow}>
+          <FontAwesome5 name={icon} size={13} color={color} />
+          <Text style={styles.sheetSectionTitle}>{title}</Text>
+          {checklist?.completadoEn ? (
+            <Text style={styles.checklistSummaryDate}>
+              {formatDateTimeLabel(checklist.completadoEn)}
+            </Text>
+          ) : null}
+        </View>
+
+        {!hasData ? (
+          <Text style={styles.checklistSummaryEmpty}>{emptyLabel}</Text>
+        ) : (
+          <View style={styles.checklistSummaryList}>
+            {items.map((it) => (
+              <View key={it.id} style={styles.checklistSummaryRow}>
+                <View
+                  style={[
+                    styles.checklistSummaryIcon,
+                    it.checked
+                      ? styles.checklistSummaryIconOk
+                      : styles.checklistSummaryIconNo,
+                  ]}
+                >
+                  <FontAwesome5
+                    name={it.checked ? "check" : "times"}
+                    size={10}
+                    color="#ffffff"
+                  />
+                </View>
+                <Text
+                  style={[
+                    styles.checklistSummaryLabel,
+                    !it.checked && styles.checklistSummaryLabelOff,
+                  ]}
+                >
+                  {it.label}
+                </Text>
+              </View>
+            ))}
+
+            {extras ? (
+              <View style={styles.checklistSummaryExtras}>
+                <Text style={styles.checklistSummaryExtrasLabel}>Extras</Text>
+                <Text style={styles.checklistSummaryExtrasValue}>{extras}</Text>
+              </View>
+            ) : null}
+          </View>
+        )}
       </View>
     );
   };
@@ -1078,6 +1297,21 @@ export default function TripsPage() {
     }
   }, [currentUser, loadTrips, loadUnits, loadUsers]);
 
+  // Rastrea la altura del teclado para que no tape el campo de extras en móvil.
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSub = Keyboard.addListener(showEvt, (e: any) =>
+      setKeyboardHeight(e?.endCoordinates?.height || 0)
+    );
+    const hideSub = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
   if (!currentUser) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#f4f6f9" }}>
@@ -1114,11 +1348,24 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
 
     console.log("[OP_START_V3] updateTripAsOperador", tripId, payload?.estado);
 
-    const attempts: Array<{ label: string; run: () => Promise<any> }> = [
-      {
+    // El checklist solo lo persiste la ruta /operador; no usar el atajo de solo-estado en ese caso.
+    const hasChecklist = Boolean(
+      payload.checklistInicio ||
+        payload.checklistRecepcion ||
+        payload.checklistFin ||
+        payload.checklistParada
+    );
+
+    const attempts: Array<{ label: string; run: () => Promise<any> }> = [];
+
+    if (!hasChecklist) {
+      attempts.push({
         label: "PUT /trips/:id (estado)",
         run: () => api.put(`/trips/${tripId}`, { estado: payload.estado }, { timeout: 45000 }),
-      },
+      });
+    }
+
+    attempts.push(
       {
         label: "PUT /trips/:id/operador",
         run: () => api.put(`/trips/${tripId}/operador`, payload, { timeout: 45000 }),
@@ -1126,31 +1373,49 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
       {
         label: "PATCH /trips/:id/operador",
         run: () => api.patch(`/trips/${tripId}/operador`, payload, { timeout: 45000 }),
-      },
-      {
+      }
+    );
+
+    if (!hasChecklist) {
+      attempts.push({
         label: "PUT /trips/:id (payload)",
         run: () => api.put(`/trips/${tripId}`, payload, { timeout: 45000 }),
-      },
-    ];
+      });
+    }
 
     setSaving(true);
     let lastError: any = null;
     try {
       for (const attempt of attempts) {
         try {
-          await attempt.run();
+          const resp = await attempt.run();
           notify("Éxito", successMessage);
           if (payload.estado) setEstado(String(payload.estado));
-          setEditingTrip((prev) =>
-            prev && String(prev.id) === tripId
-              ? {
-                  ...prev,
-                  estado: payload.estado ?? prev.estado,
-                  destinoActualIndex:
-                    payload.destinoActualIndex ?? prev.destinoActualIndex,
-                }
-              : prev
-          );
+
+          const serverTrip = resp?.data?.trip
+            ? { ...resp.data.trip, id: resp.data.trip._id || resp.data.trip.id || tripId }
+            : null;
+
+          // Actualiza al instante el detalle abierto (incluye checklists) sin esperar la recarga.
+          setEditingTrip((prev) => {
+            if (!prev || String(prev.id) !== tripId) return prev;
+            if (serverTrip) return { ...prev, ...serverTrip, id: prev.id };
+            return {
+              ...prev,
+              estado: payload.estado ?? prev.estado,
+              destinoActualIndex: payload.destinoActualIndex ?? prev.destinoActualIndex,
+              checklistInicio: payload.checklistInicio ?? prev.checklistInicio,
+              checklistRecepcion: payload.checklistRecepcion ?? prev.checklistRecepcion,
+              checklistFin: payload.checklistFin ?? prev.checklistFin,
+            };
+          });
+
+          if (serverTrip) {
+            setTrips((prev) =>
+              prev.map((t) => (String(t.id) === tripId ? { ...t, ...serverTrip, id: t.id } : t))
+            );
+          }
+
           // Recarga en background: no debe tumbar el éxito en móvil
           void loadTrips().catch((e) => console.warn("[OP_START_V3] loadTrips:", e));
           return;
@@ -1171,7 +1436,7 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
     }
   };
 
-  const iniciarViaje = async (trip: Trip) => {
+  const iniciarViaje = async (trip: Trip, checklistInicio?: ChecklistSaved) => {
     console.log("[OP_START_V3] iniciarViaje", trip?.id, trip?.estado);
     const estado = getTripEstadoKey(trip.estado);
     if (estado !== "pendiente" && estado !== "en parada") {
@@ -1184,7 +1449,11 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
     const extras = normalizeDestinosExtrasList(trip.destinoExtra).map((item) => ({ ...item }));
 
     if (estado === "pendiente" || index <= 0) {
-      await updateTripAsOperador(trip, { estado: "en progreso" }, "Viaje iniciado");
+      await updateTripAsOperador(
+        trip,
+        { estado: "en progreso", ...(checklistInicio ? { checklistInicio } : {}) },
+        "Viaje iniciado"
+      );
       return;
     }
 
@@ -1201,12 +1470,36 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
         destinoActualIndex: index,
         multidestino: true,
         destinoExtra: buildDestinoExtraPayload(extras),
+        ...(checklistInicio ? { checklistInicio } : {}),
       },
       "Siguiente tramo iniciado"
     );
   };
 
-  const finalizarParada = async (trip: Trip) => {
+  /** Abre el checklist de entrega de la parada solo si hay una parada siguiente. */
+  const startFinalizarParada = (trip: Trip) => {
+    const estado = getTripEstadoKey(trip.estado);
+    if (estado !== "en progreso") {
+      Alert.alert("No disponible", "Solo puedes finalizar parada con el viaje en progreso.");
+      return;
+    }
+    const index = trip.destinoActualIndex ?? 0;
+    const total = getTotalDestinosCount(trip);
+    if (index + 1 >= total) {
+      Alert.alert(
+        "Sin más paradas",
+        "Este es el último destino. Usa Finalizar viaje para completar el recorrido."
+      );
+      return;
+    }
+    openFinishChecklist(trip, "parada");
+  };
+
+  const finalizarParada = async (
+    trip: Trip,
+    checklist?: ChecklistSaved,
+    recepcion?: ChecklistSaved
+  ) => {
     const estado = getTripEstadoKey(trip.estado);
     if (estado !== "en progreso") {
       Alert.alert("No disponible", "Solo puedes finalizar parada con el viaje en progreso.");
@@ -1226,12 +1519,20 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
       return;
     }
 
+    // Guarda el checklist de entrega (y recepción) de ESTA parada, con su índice y destino.
+    const stops = buildDeliveryStops(trip);
+    const destinoParada = stops[index]?.destino || trip.destino || "";
+    const checklistParada = checklist
+      ? { ...checklist, index, destino: destinoParada, recepcion: recepcion ?? null }
+      : undefined;
+
     if (index <= 0) {
       await updateTripAsOperador(
         trip,
         {
           estado: "en parada",
           destinoActualIndex: 1,
+          ...(checklistParada ? { checklistParada } : {}),
         },
         "Parada finalizada."
       );
@@ -1245,12 +1546,13 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
         destinoActualIndex: index + 1,
         multidestino: true,
         destinoExtra: buildDestinoExtraPayload(extras),
+        ...(checklistParada ? { checklistParada } : {}),
       },
       "Parada finalizada."
     );
   };
 
-  const finalizarViaje = async (trip: Trip) => {
+  const finalizarViaje = async (trip: Trip, checklistFin?: ChecklistSaved) => {
     const estado = getTripEstadoKey(trip.estado);
     if (estado !== "en progreso" && estado !== "en parada") {
       Alert.alert("No disponible", "Solo puedes finalizar un viaje en progreso o en parada.");
@@ -1266,6 +1568,7 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
         estado: "completado",
         destinoActualIndex: index,
         multidestino: Boolean(trip.multidestino),
+        ...(checklistFin ? { checklistFin } : {}),
       },
       "Viaje finalizado."
     );
@@ -1523,12 +1826,22 @@ const renderDeleteConfirmModal = () => {
   );
 
   const exportToExcel = async () => {
-    const periodTrips = trips.filter((t) => isTripInExportPeriod(t, exportType));
+    // La exportación por "semana" respeta la semana elegida en el selector.
+    const matchesPeriod = (t: Trip) => {
+      if (exportType === "general") return true;
+      if (exportType === "semana") return isTripInWeek(t, selectedWeekStart);
+      return isTripInExportPeriod(t, exportType);
+    };
+
+    const periodTrips = trips.filter(matchesPeriod);
+    const periodLabel = exportOptions.find((o) => o.value === exportType)?.label || exportType;
+    const periodDetail =
+      exportType === "semana"
+        ? `${periodLabel} (${formatWeekRangeLabel(selectedWeekStart)})`
+        : periodLabel;
+
     if (periodTrips.length === 0) {
-      Alert.alert(
-        "Sin datos",
-        `No hay viajes en el periodo "${exportOptions.find((o) => o.value === exportType)?.label || exportType}".`
-      );
+      Alert.alert("Sin datos", `No hay viajes para "${periodDetail}".`);
       return;
     }
 
@@ -1542,13 +1855,20 @@ const renderDeleteConfirmModal = () => {
           Ruta: t.rutaAcubrir ?? "",
           Destino: t.destino ?? "",
           Salida: formatExcelDateTime(t.fechaSalida),
-          Llegada: formatExcelDateTime(t.fechaLlegada),
+          "Llegada estimada": formatExcelDateTime(t.fechaLlegada),
+          "Finalizado (real)": t.finalizadoEn ? formatExcelDateTime(t.finalizadoEn) : "",
           Estado: t.estado ?? "",
           Operador: resolveUserName(conductorIdVal),
           Acompañante: resolveUserName(t.acompanante) || "Sin acompañante",
           Multidestino: t.multidestino ? "Sí" : "No",
           "Destinos extras": extras.map((d) => d.destino || "Sin nombre").join(" | "),
           Unidad: unit ? formatUnitLabel(unit) : t.unidadId || "",
+          "KM Salida": formatKmLabel(t.kilometrajeSalida),
+          "KM Llegada": formatKmLabel(t.kilometrajeLlegada),
+          "DEF entregado": t.def?.trim() ? t.def.trim() : "",
+          "Checklist inicio": formatChecklistForExcel(t.checklistInicio),
+          "Checklist recepción": formatChecklistForExcel(t.checklistRecepcion),
+          "Checklist entrega": formatChecklistForExcel(t.checklistFin),
         };
       });
 
@@ -1564,11 +1884,14 @@ const renderDeleteConfirmModal = () => {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Viajes");
 
-      const periodLabel = exportOptions.find((o) => o.value === exportType)?.label || exportType;
+      const slug = periodDetail.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "");
       const stamp = new Date().toISOString().slice(0, 10);
-      await downloadExcelFile(wb, `Reporte_Viajes_${periodLabel}_${stamp}.xlsx`);
+      await downloadExcelFile(wb, `Reporte_Viajes_${slug}_${stamp}.xlsx`);
 
-      Alert.alert("Éxito", `Excel generado (${periodTrips.length} viaje${periodTrips.length === 1 ? "" : "s"}).`);
+      Alert.alert(
+        "Éxito",
+        `Excel generado: ${periodDetail} (${periodTrips.length} viaje${periodTrips.length === 1 ? "" : "s"}).`
+      );
     } catch (error: any) {
       console.error("Error exportando Excel", error);
       if (error?.message === "sharing_unavailable") {
@@ -1617,8 +1940,69 @@ const renderDeleteConfirmModal = () => {
     }
     console.log("[OP_START_V3] checklist confirm", checklistTrip.id);
     const tripToStart = checklistTrip;
+    const payload = buildChecklistPayload(START_TRIP_CHECKLIST, checklistChecked);
     closeStartChecklist();
-    await iniciarViaje(tripToStart);
+    await iniciarViaje(tripToStart, payload);
+  };
+
+  const openFinishChecklist = (
+    trip: Trip,
+    mode: "final" | "parada" | "recepcion" | "recepcion-parada" = "final"
+  ) => {
+    setFinishChecklistTrip(trip);
+    setFinishMode(mode);
+    setFinishChecklistChecked(emptyFinishChecklistState());
+    setFinishExtras("");
+  };
+
+  const closeFinishChecklist = () => {
+    setFinishChecklistTrip(null);
+    setFinishMode("final");
+    setFinishChecklistChecked(emptyFinishChecklistState());
+    setFinishExtras("");
+    setPendingParadaEntrega(null);
+  };
+
+  const toggleFinishItem = (id: FinishChecklistId) => {
+    setFinishChecklistChecked((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const confirmFinishFromChecklist = async () => {
+    if (!finishChecklistTrip) return;
+    const tripToFinish = finishChecklistTrip;
+    const mode = finishMode;
+    const payload = buildChecklistPayload(
+      FINISH_TRIP_CHECKLIST,
+      finishChecklistChecked,
+      finishExtras
+    );
+
+    // Finalizar parada = 2 pasos: primero entrega, luego recepción de esa parada.
+    if (mode === "parada") {
+      setPendingParadaEntrega(payload);
+      setFinishMode("recepcion-parada");
+      setFinishChecklistChecked(emptyFinishChecklistState());
+      setFinishExtras("");
+      return;
+    }
+
+    if (mode === "recepcion-parada") {
+      const entrega = pendingParadaEntrega;
+      closeFinishChecklist();
+      await finalizarParada(tripToFinish, entrega ?? undefined, payload);
+      return;
+    }
+
+    closeFinishChecklist();
+    if (mode === "recepcion") {
+      await guardarRecepcion(tripToFinish, payload);
+    } else {
+      await finalizarViaje(tripToFinish, payload);
+    }
+  };
+
+  const guardarRecepcion = async (trip: Trip, checklistRecepcion: ChecklistSaved) => {
+    await updateTripAsOperador(trip, { checklistRecepcion }, "Recepción guardada.");
   };
 
   /** UI del checklist (sin Modal propio). En móvil se embebe sobre el detalle del viaje. */
@@ -1737,12 +2121,196 @@ const renderDeleteConfirmModal = () => {
     );
   };
 
+  /** Checklist de entrega al finalizar. Items opcionales + extras manual. */
+  const renderFinishChecklistOverlay = (embedded = false) => {
+    if (!finishChecklistTrip) return null;
+
+    const card = (
+      <View
+        style={[styles.checklistCard, isNarrowList && styles.checklistCardMobile]}
+        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+      >
+        <View style={styles.checklistHeader}>
+          <View style={[styles.checklistIconBadge, styles.checklistIconBadgeFinish]}>
+            <FontAwesome5 name="clipboard-list" size={16} color="#ffffff" />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.checklistTitle}>
+              {finishMode === "parada"
+                ? "Entrega de parada (1/2)"
+                : finishMode === "recepcion-parada"
+                ? "Recepción de parada (2/2)"
+                : finishMode === "recepcion"
+                ? "Checklist de recepción"
+                : "Checklist de entrega"}
+            </Text>
+            <Text style={styles.checklistSubtitle} numberOfLines={2}>
+              {finishChecklistTrip.rutaAcubrir} → {finishChecklistTrip.destino}
+            </Text>
+          </View>
+          <Pressable style={styles.checklistClose} onPress={closeFinishChecklist}>
+            <FontAwesome5 name="times" size={13} color="#6b7280" />
+          </Pressable>
+        </View>
+
+        <Text style={styles.checklistIntro}>
+          {finishMode === "recepcion" || finishMode === "recepcion-parada"
+            ? "Marca lo que se recibió."
+            : "Marca lo que se entregó."}
+        </Text>
+
+        <ScrollView
+          style={[
+            styles.finishChecklistScroll,
+            Platform.OS !== "web" && keyboardHeight > 0 ? { maxHeight: 150 } : null,
+          ]}
+          contentContainerStyle={styles.checklistList}
+          showsVerticalScrollIndicator
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+        >
+          {FINISH_TRIP_CHECKLIST.map((item) => {
+            const active = finishChecklistChecked[item.id];
+            return (
+              <Pressable
+                key={item.id}
+                style={({ pressed }) => [
+                  styles.checklistRow,
+                  active && styles.checklistRowActive,
+                  pressed && styles.checklistRowPressed,
+                ]}
+                onPress={() => toggleFinishItem(item.id)}
+              >
+                <View style={[styles.checklistBox, active && styles.checklistBoxActive]}>
+                  {active ? <FontAwesome5 name="check" size={11} color="#ffffff" /> : null}
+                </View>
+                <Text style={[styles.checklistLabel, active && styles.checklistLabelActive]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        <View style={styles.finishExtrasGroup}>
+          <Text style={styles.finishExtrasLabel}>Extras</Text>
+          <TextInput
+            placeholder={
+              finishMode === "recepcion" || finishMode === "recepcion-parada"
+                ? "Escribe otros elementos recibidos…"
+                : "Escribe otros elementos entregados…"
+            }
+            value={finishExtras}
+            onChangeText={setFinishExtras}
+            mode="outlined"
+            dense
+            multiline
+            outlineColor="#e5e7eb"
+            activeOutlineColor="#111111"
+            style={styles.finishExtrasInput}
+            contentStyle={styles.finishExtrasInputContent}
+          />
+        </View>
+
+        <View style={styles.checklistActions}>
+          <TouchableOpacity
+            style={styles.checklistCancelBtn}
+            onPress={closeFinishChecklist}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.checklistCancelText}>Cancelar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.checklistConfirmBtn, saving && styles.checklistConfirmBtnDisabled]}
+            onPress={() => {
+              void confirmFinishFromChecklist();
+            }}
+            disabled={saving}
+            activeOpacity={0.85}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <>
+                <FontAwesome5
+                  name={
+                    finishMode === "parada"
+                      ? "arrow-right"
+                      : finishMode === "recepcion-parada"
+                      ? "map-marker-alt"
+                      : finishMode === "recepcion"
+                      ? "clipboard-check"
+                      : "flag-checkered"
+                  }
+                  size={13}
+                  color="#ffffff"
+                />
+                <Text style={styles.checklistConfirmText}>
+                  {finishMode === "parada"
+                    ? "Siguiente: recepción"
+                    : finishMode === "recepcion-parada"
+                    ? "Finalizar parada"
+                    : finishMode === "recepcion"
+                    ? "Guardar recepción"
+                    : "Finalizar viaje"}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+
+    return (
+      <View
+        style={[
+          styles.checklistOverlay,
+          embedded ? styles.checklistOverlayEmbedded : null,
+          Platform.OS === "web" ? styles.checklistOverlayWeb : null,
+        ]}
+        pointerEvents="box-none"
+      >
+        <Pressable style={styles.checklistBackdrop} onPress={closeFinishChecklist} />
+        <View
+          style={[
+            styles.checklistKav,
+            Platform.OS !== "web" && keyboardHeight > 0
+              ? { paddingBottom: keyboardHeight, justifyContent: "flex-start", paddingTop: 12 }
+              : null,
+          ]}
+          pointerEvents="box-none"
+        >
+          {card}
+        </View>
+      </View>
+    );
+  };
+
+  const renderFinishChecklistModal = () => {
+    if (!finishChecklistTrip) return null;
+    if (Platform.OS !== "web" && modalVisible) return null;
+
+    if (Platform.OS === "web") {
+      return <Portal>{renderFinishChecklistOverlay(false)}</Portal>;
+    }
+
+    return (
+      <Modal visible transparent animationType="fade" onRequestClose={closeFinishChecklist}>
+        {renderFinishChecklistOverlay(false)}
+      </Modal>
+    );
+  };
+
   const renderOperadorActions = (trip: Trip, compact = false) => {
     const liveTrip = trips.find((t) => t.id === trip.id) || trip;
     const estado = getTripEstadoKey(liveTrip.estado);
     const canIniciar = estado === "pendiente" || estado === "en parada";
-    const canParada = estado === "en progreso" && getTotalDestinosCount(liveTrip) > (liveTrip.destinoActualIndex ?? 0) + 1;
+    // "Finalizar parada" solo aplica a viajes multidestino (hay más de un destino).
+    const esMultidestino =
+      Boolean(liveTrip.multidestino) || getTotalDestinosCount(liveTrip) > 1;
+    const canParada = estado === "en progreso" && esMultidestino;
     const canFinalizar = estado === "en progreso" || estado === "en parada";
+    const canRecepcion = estado === "en progreso" || estado === "en parada";
 
     if (estado === "completado") {
       return (
@@ -1775,7 +2343,7 @@ const renderDeleteConfirmModal = () => {
         {canParada && (
           <TouchableOpacity
             style={[styles.operadorActionBtn, styles.operadorActionSecondary, styles.operadorActionBtnFixed]}
-            onPress={() => finalizarParada(liveTrip)}
+            onPress={() => startFinalizarParada(liveTrip)}
             disabled={saving}
             activeOpacity={0.85}
           >
@@ -1783,10 +2351,21 @@ const renderDeleteConfirmModal = () => {
             <Text style={styles.operadorActionText}>Finalizar parada</Text>
           </TouchableOpacity>
         )}
+        {canRecepcion && (
+          <TouchableOpacity
+            style={[styles.operadorActionBtn, styles.operadorActionSecondary, styles.operadorActionBtnFixed]}
+            onPress={() => openFinishChecklist(liveTrip, "recepcion")}
+            disabled={saving}
+            activeOpacity={0.85}
+          >
+            <FontAwesome5 name="clipboard-check" size={13} color="#111111" />
+            <Text style={styles.operadorActionText}>Recepción</Text>
+          </TouchableOpacity>
+        )}
         {canFinalizar && (
           <TouchableOpacity
             style={[styles.operadorActionBtn, styles.operadorActionDanger, styles.operadorActionBtnFixed]}
-            onPress={() => finalizarViaje(liveTrip)}
+            onPress={() => openFinishChecklist(liveTrip)}
             disabled={saving}
             activeOpacity={0.85}
           >
@@ -1908,16 +2487,6 @@ const renderDeleteConfirmModal = () => {
                   >
                     <FontAwesome5 name="eye" size={13} color="#ffffff" />
                     <Text style={styles.mobileDetailsBtnText}>Ver detalles</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {canEdit && getTripEstadoKey(item.estado) === "completado" ? (
-                  <TouchableOpacity
-                    style={styles.mobileRepeatBtn}
-                    onPress={() => openModal(item, { asRepeat: true })}
-                    activeOpacity={0.85}
-                  >
-                    <FontAwesome5 name="redo" size={13} color="#111111" />
-                    <Text style={styles.mobileRepeatBtnText}>Repetir</Text>
                   </TouchableOpacity>
                 ) : null}
                 {canDelete ? (
@@ -2042,16 +2611,6 @@ const renderDeleteConfirmModal = () => {
               {canEdit && (
                 <TouchableOpacity style={styles.iconAction} onPress={() => openModal(item)} activeOpacity={0.85}>
                   <FontAwesome5 name="pen" size={13} color="#111111" />
-                </TouchableOpacity>
-              )}
-              {canEdit && getTripEstadoKey(item.estado) === "completado" && (
-                <TouchableOpacity
-                  style={styles.iconAction}
-                  onPress={() => openModal(item, { asRepeat: true })}
-                  activeOpacity={0.85}
-                  accessibilityLabel="Repetir viaje"
-                >
-                  <FontAwesome5 name="redo" size={13} color="#111111" />
                 </TouchableOpacity>
               )}
               {canDelete && (
@@ -2414,16 +2973,80 @@ const renderDeleteConfirmModal = () => {
     );
   };
 
+  const openPicker = (cfg: {
+    mode: "date" | "time";
+    initial: Date;
+    apply: (d: Date) => void;
+    title: string;
+  }) => {
+    dismissKeyboard();
+    setPickerTemp(cfg.initial);
+    setActivePicker({ mode: cfg.mode, apply: cfg.apply, title: cfg.title });
+  };
+
+  const renderPickerOverlay = () => {
+    if (!activePicker || Platform.OS === "web") return null;
+    const close = () => setActivePicker(null);
+
+    // Android: el diálogo nativo se muestra y cierra solo.
+    if (Platform.OS === "android") {
+      return (
+        <DateTimePicker
+          value={pickerTemp}
+          mode={activePicker.mode}
+          display="default"
+          is24Hour
+          onChange={(event: any, d?: Date) => {
+            close();
+            if (event?.type === "dismissed") return;
+            if (d) activePicker.apply(d);
+          }}
+        />
+      );
+    }
+
+    // iOS: overlay propio (un Modal anidado quedaría oculto detrás del modal del viaje).
+    return (
+      <View style={styles.pickerOverlay}>
+        <Pressable style={styles.pickerBackdrop} onPress={close} />
+        <View style={styles.pickerCard}>
+          <View style={styles.pickerHeader}>
+            <Text style={styles.pickerTitle} numberOfLines={1}>
+              {activePicker.title}
+            </Text>
+            <Pressable
+              style={styles.iosPickerDone}
+              onPress={() => {
+                activePicker.apply(pickerTemp);
+                close();
+              }}
+            >
+              <Text style={styles.iosPickerDoneText}>Listo</Text>
+            </Pressable>
+          </View>
+          <DateTimePicker
+            value={pickerTemp}
+            mode={activePicker.mode}
+            display="spinner"
+            is24Hour
+            themeVariant="light"
+            textColor="#111111"
+            style={styles.iosPicker}
+            onChange={(_event: any, d?: Date) => {
+              if (d) setPickerTemp(d);
+            }}
+          />
+        </View>
+      </View>
+    );
+  };
+
   const renderDateTimeField = (
     label: string,
     dateValue: string,
     timeValue: string,
     onDateChange: (formatted: string) => void,
-    onTimeChange: (formatted: string) => void,
-    showDatePicker: boolean,
-    setShowDatePicker: (v: boolean) => void,
-    showTimePicker: boolean,
-    setShowTimePicker: (v: boolean) => void
+    onTimeChange: (formatted: string) => void
   ) => {
     const touchLike = isCompactModal || isNarrowList || isMobile;
 
@@ -2538,11 +3161,14 @@ const renderDeleteConfirmModal = () => {
       <View style={styles.dateTimeStackWeb}>
         <Pressable
           style={[styles.dateTimeHitBox, touchLike && styles.dateTimeHitBoxTouch]}
-          onPress={() => {
-            dismissKeyboard();
-            setShowTimePicker(false);
-            setTimeout(() => setShowDatePicker(true), 80);
-          }}
+          onPress={() =>
+            openPicker({
+              mode: "date",
+              initial: parseDate(dateValue) || new Date(),
+              apply: (d) => onDateChange(formatDateDisplay(d)),
+              title: `${label} · fecha`,
+            })
+          }
         >
           <FontAwesome5 name="calendar-alt" size={15} color="#6b7280" />
           <Text
@@ -2554,11 +3180,17 @@ const renderDeleteConfirmModal = () => {
         </Pressable>
         <Pressable
           style={[styles.dateTimeHitBox, touchLike && styles.dateTimeHitBoxTouch]}
-          onPress={() => {
-            dismissKeyboard();
-            setShowDatePicker(false);
-            setTimeout(() => setShowTimePicker(true), 80);
-          }}
+          onPress={() =>
+            openPicker({
+              mode: "time",
+              initial: timeValue
+                ? combineDateTime(dateValue || formatDateDisplay(new Date()), timeValue) ||
+                  new Date()
+                : new Date(),
+              apply: (d) => onTimeChange(formatTimeDisplay(d)),
+              title: `${label} · hora`,
+            })
+          }
         >
           <FontAwesome5 name="clock" size={15} color="#6b7280" />
           <Text
@@ -2568,48 +3200,6 @@ const renderDeleteConfirmModal = () => {
             {timeValue || "Seleccionar hora"}
           </Text>
         </Pressable>
-        {showDatePicker && (
-          <DateTimePicker
-            value={parseDate(dateValue) || new Date()}
-            mode="date"
-            display={Platform.OS === "ios" ? "spinner" : "default"}
-            onChange={(event: any, date) => {
-              if (Platform.OS === "android") {
-                setShowDatePicker(false);
-                if (event?.type === "dismissed") return;
-              }
-              if (date) onDateChange(formatDateDisplay(date));
-            }}
-          />
-        )}
-        {showTimePicker && (
-          <DateTimePicker
-            value={
-              combineDateTime(dateValue || formatDateDisplay(new Date()), timeValue) || new Date()
-            }
-            mode="time"
-            display={Platform.OS === "ios" ? "spinner" : "default"}
-            is24Hour
-            onChange={(event: any, date) => {
-              if (Platform.OS === "android") {
-                setShowTimePicker(false);
-                if (event?.type === "dismissed") return;
-              }
-              if (date) onTimeChange(formatTimeDisplay(date));
-            }}
-          />
-        )}
-        {Platform.OS === "ios" && (showDatePicker || showTimePicker) && (
-          <Pressable
-            style={styles.iosPickerDone}
-            onPress={() => {
-              setShowDatePicker(false);
-              setShowTimePicker(false);
-            }}
-          >
-            <Text style={styles.iosPickerDoneText}>Listo</Text>
-          </Pressable>
-        )}
       </View>
     );
   };
@@ -2651,7 +3241,7 @@ const renderDeleteConfirmModal = () => {
                 setDestinosExtras((prev) => (prev.length > 0 ? prev : [emptyDestinoExtra()]));
               } else {
                 setDestinosExtras([]);
-                setMultiPicker(null);
+                setActivePicker(null);
               }
             }}
             activeOpacity={0.85}
@@ -2847,17 +3437,7 @@ const renderDeleteConfirmModal = () => {
                     )}
                     {editingTrip && selectedUnit ? (
                       <View style={styles.unitDetailRow}>
-                        {selectedUnit.imagenUrl ? (
-                          <Image
-                            source={{ uri: selectedUnit.imagenUrl }}
-                            style={styles.unitDetailPhoto}
-                            resizeMode="cover"
-                          />
-                        ) : (
-                          <View style={styles.unitDetailPhotoPlaceholder}>
-                            <FontAwesome5 name="truck" size={18} color="#6b7280" />
-                          </View>
-                        )}
+                        <UnitPhoto uri={selectedUnit.imagenUrl} />
                         <View style={styles.unitDetailText}>
                           <Text style={styles.unitDetailName}>
                             {formatUnitLabel(selectedUnit)}
@@ -2869,7 +3449,7 @@ const renderDeleteConfirmModal = () => {
                     {mostrarRemolque && (
                       <View style={styles.remolqueBox}>
                         <Text style={styles.remolqueHint}>
-                          Unidad {selectedUnit?.nombre || ""} — selecciona si lleva Lowboy o Caja Seca
+                          Tractor {selectedUnit?.nombre || ""} — selecciona el remolque (Lowboy o Caja Seca) y su placa
                         </Text>
                         {renderFieldRow(
                           <>
@@ -3005,11 +3585,7 @@ const renderDeleteConfirmModal = () => {
                         fechaSalida,
                         horaSalida,
                         handleFechaSalidaChange,
-                        handleHoraSalidaChange,
-                        showSalidaPicker,
-                        setShowSalidaPicker,
-                        showSalidaTimePicker,
-                        setShowSalidaTimePicker
+                        handleHoraSalidaChange
                       )}
                     </View>
                     <View style={styles.fechaBlock}>
@@ -3018,11 +3594,7 @@ const renderDeleteConfirmModal = () => {
                         fechaLlegada,
                         horaLlegada,
                         handleFechaLlegadaChange,
-                        handleHoraLlegadaChange,
-                        showLlegadaPicker,
-                        setShowLlegadaPicker,
-                        showLlegadaTimePicker,
-                        setShowLlegadaTimePicker
+                        handleHoraLlegadaChange
                       )}
                       <Text style={styles.fechaAutoHint}>
                         Solo estimado. El viaje queda pendiente para el operador; no se marca como completado.
@@ -3057,34 +3629,14 @@ const renderDeleteConfirmModal = () => {
                             extra.fechaSalida,
                             extra.horaSalida,
                             (v) => updateDestinoExtraAt(index, { fechaSalida: v }),
-                            (v) => updateDestinoExtraAt(index, { horaSalida: v }),
-                            multiPicker?.index === index && multiPicker.field === "salidaDate",
-                            (v) =>
-                              setMultiPicker(
-                                v ? { index, field: "salidaDate" } : null
-                              ),
-                            multiPicker?.index === index && multiPicker.field === "salidaTime",
-                            (v) =>
-                              setMultiPicker(
-                                v ? { index, field: "salidaTime" } : null
-                              )
+                            (v) => updateDestinoExtraAt(index, { horaSalida: v })
                           )}
                           {renderDateTimeField(
                             "Llegada estimada (opcional)",
                             extra.fechaLlegada,
                             extra.horaLlegada,
                             (v) => updateDestinoExtraAt(index, { fechaLlegada: v }),
-                            (v) => updateDestinoExtraAt(index, { horaLlegada: v }),
-                            multiPicker?.index === index && multiPicker.field === "llegadaDate",
-                            (v) =>
-                              setMultiPicker(
-                                v ? { index, field: "llegadaDate" } : null
-                              ),
-                            multiPicker?.index === index && multiPicker.field === "llegadaTime",
-                            (v) =>
-                              setMultiPicker(
-                                v ? { index, field: "llegadaTime" } : null
-                              )
+                            (v) => updateDestinoExtraAt(index, { horaLlegada: v })
                           )}
 
                           {renderModalField(
@@ -3370,6 +3922,26 @@ const renderDeleteConfirmModal = () => {
             </View>
           ) : (
             <View style={styles.toolbarRightActionsMobile}>
+              <View style={styles.filterBlock}>
+                <Text style={styles.toolbarLabel}>Periodo exportar</Text>
+                <View style={[styles.segmentedControl, styles.segmentedControlMobile]}>
+                  {exportOptions.map((opt) => {
+                    const isActive = exportType === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[styles.filterPill, styles.filterPillMobile, isActive && styles.filterPillActive]}
+                        onPress={() => setExportType(opt.value)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.filterPillText, isActive && styles.filterPillTextActive]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
               <TouchableOpacity style={[styles.exportButton, styles.exportButtonMobile]} onPress={exportToExcel} activeOpacity={0.85}>
                 <FontAwesome5 name="file-excel" size={14} color="#111111" />
                 <Text style={styles.exportButtonText}>Exportar Excel</Text>
@@ -3453,6 +4025,7 @@ const renderDeleteConfirmModal = () => {
 
       {isAdmin ? renderWeekSelectSheet() : null}
       {renderStartChecklistModal()}
+      {renderFinishChecklistModal()}
       {renderDeleteConfirmModal()}
 
       {Platform.OS === "web" && modalVisible ? (
@@ -3476,6 +4049,9 @@ const renderDeleteConfirmModal = () => {
             {renderModalContent()}
             {/* Checklist sobre el detalle: evita Modal anidado que en iOS queda oculto */}
             {checklistTrip ? renderChecklistOverlay(true) : null}
+            {finishChecklistTrip ? renderFinishChecklistOverlay(true) : null}
+            {/* Selector de fecha/hora: overlay a nivel del modal (Modal anidado se oculta en iOS) */}
+            {renderPickerOverlay()}
           </View>
         </Modal>
       )}
@@ -4456,6 +5032,25 @@ const styles = StyleSheet.create({
   sheetMetaItemFull: {
     width: "100%",
   },
+  sheetMetaItemFinish: {
+    marginTop: 4,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+  },
+  sheetFinishLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 4,
+  },
+  sheetFinishValue: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#047857",
+  },
   sheetMetaLabel: {
     fontSize: 11,
     fontWeight: "700",
@@ -4662,7 +5257,14 @@ const styles = StyleSheet.create({
   },
   checklistOverlayWeb: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 1200,
+    position: "fixed" as any,
+    zIndex: 10050,
+  },
+  checklistKav: {
+    flex: 1,
+    width: "100%",
+    justifyContent: "center",
+    alignItems: "center",
   },
   checklistBackdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -4704,6 +5306,96 @@ const styles = StyleSheet.create({
     backgroundColor: "#111111",
     alignItems: "center",
     justifyContent: "center",
+  },
+  checklistIconBadgeFinish: {
+    backgroundColor: "#dc2626",
+  },
+  checklistSummaryTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+    marginBottom: 10,
+  },
+  checklistSummaryDate: {
+    marginLeft: "auto",
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#94a3b8",
+  },
+  checklistSummaryEmpty: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#94a3b8",
+    fontStyle: "italic",
+  },
+  checklistSummaryList: { gap: 8 },
+  checklistSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  checklistSummaryIcon: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checklistSummaryIconOk: { backgroundColor: "#16a34a" },
+  checklistSummaryIconNo: { backgroundColor: "#cbd5e1" },
+  checklistSummaryLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111111",
+  },
+  checklistSummaryLabelOff: {
+    color: "#94a3b8",
+    textDecorationLine: "line-through",
+  },
+  checklistSummaryExtras: {
+    marginTop: 4,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    gap: 4,
+  },
+  checklistSummaryExtrasLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#6b7280",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  checklistSummaryExtrasValue: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111111",
+    lineHeight: 19,
+  },
+  finishChecklistScroll: {
+    maxHeight: 340,
+    marginTop: 4,
+  },
+  finishExtrasGroup: {
+    marginTop: 6,
+    gap: 6,
+  },
+  finishExtrasLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#374151",
+  },
+  finishExtrasInput: {
+    backgroundColor: "#ffffff",
+    fontSize: 14,
+  },
+  finishExtrasInputContent: {
+    minHeight: 56,
+    paddingTop: 8,
   },
   checklistTitle: {
     fontSize: 17,
@@ -5329,8 +6021,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   iosPickerDone: {
-    alignSelf: "flex-end",
-    marginTop: 8,
     backgroundColor: "#111111",
     borderRadius: 999,
     paddingHorizontal: 16,
@@ -5340,6 +6030,42 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontWeight: "700",
     fontSize: 14,
+  },
+  pickerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "flex-end",
+    zIndex: 10060,
+    elevation: 40,
+  },
+  pickerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15, 23, 42, 0.5)",
+  },
+  pickerCard: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 24,
+    borderTopWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  pickerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 4,
+  },
+  pickerTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#111111",
+  },
+  iosPicker: {
+    alignSelf: "stretch",
   },
   modalSectionTitle: { fontSize: 13, fontWeight: "800", color: "#111111", marginBottom: 10, marginTop: 4, letterSpacing: 0.2,},
   modalSectionTitleMobile: { fontSize: 14, marginBottom: 12, marginTop: 8 },

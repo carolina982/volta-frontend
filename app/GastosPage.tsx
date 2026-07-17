@@ -208,10 +208,11 @@ const normalizarViaticoParaEditar = (viatico: any, _conceptosBaseList: string[])
   };
 };
 
-const filterOptions: { value: "day" | "week" | "month"; label: string }[] = [
+const filterOptions: { value: "day" | "week" | "month" | "general"; label: string }[] = [
   { value: "day", label: "Día" },
   { value: "week", label: "Semana" },
   { value: "month", label: "Mes" },
+  { value: "general", label: "General" },
 ];
 
 const MONTH_SHORT_ES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
@@ -267,8 +268,9 @@ const isViaticoInWeek = (v: { createdAt?: any; fecha?: any; updatedAt?: any }, w
 
 const isViaticoInExportPeriod = (
   v: { createdAt?: any; fecha?: any; updatedAt?: any },
-  exportType: "day" | "week" | "month"
+  exportType: "day" | "week" | "month" | "general"
 ) => {
+  if (exportType === "general") return true;
   const date = getViaticoDate(v);
   if (!date) return false;
 
@@ -342,7 +344,8 @@ export default function ViaticsPage() {
   const [listLoading, setListLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [showFactura, setShowFactura] = useState(false);
-  const [filter, setFilter] = useState<"day" | "week" | "month">("week");
+  const [filter, setFilter] = useState<"day" | "week" | "month" | "general">("week");
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [conductorFilter, setConductorFilter] = useState<string>("");
   const [selectedWeekStart, setSelectedWeekStart] = useState(() => getWeekStartMonday());
   const [weekSheetVisible, setWeekSheetVisible] = useState(false);
@@ -635,7 +638,12 @@ export default function ViaticsPage() {
   //exportacion  excel 
 const exportViaticosToExcel =async ()=>{
   try {
-    const exportRows = viaticos.filter((v) => isViaticoInExportPeriod(v, filter));
+    // "Semana" respeta la semana elegida en el selector; "General" incluye todo.
+    const exportRows = viaticos.filter((v) => {
+      if (filter === "general") return true;
+      if (filter === "week") return isViaticoInWeek(v, selectedWeekStart);
+      return isViaticoInExportPeriod(v, filter);
+    });
     if (!exportRows.length){
       const periodLabel = filterOptions.find((o) => o.value === filter)?.label || filter;
       if (Platform.OS === "web") {
@@ -770,7 +778,12 @@ const exportViaticosToExcel =async ()=>{
 
     XLSX.utils.book_append_sheet(wb,ws,"Viaticos");
     const stamp = new Date().toISOString().slice(0, 10);
-    const periodSlug = filterOptions.find((o) => o.value === filter)?.label || filter;
+    const periodLabelBase = filterOptions.find((o) => o.value === filter)?.label || filter;
+    const periodDetail =
+      filter === "week"
+        ? `${periodLabelBase} ${formatWeekRangeLabel(selectedWeekStart)}`
+        : periodLabelBase;
+    const periodSlug = periodDetail.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "");
     const filename = `Viaticos_${periodSlug}_${stamp}.xlsx`;
 
     if (Platform.OS === "web"){
@@ -1033,27 +1046,82 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
     }
   };
 
-  const deleteViatico = async (id: string) => {
-    const proceedWithDelete = async () => {
-      try {
-        await api.delete(`/viatics/${id}`);
-        setViaticos((prev) => prev.filter((v) => v.id !== id));
-        notify("Listo", "Gasto eliminado correctamente.");
-      } catch (e) {
-        notify("Error", "No se pudo eliminar el gasto.");
-      }
-    };
+  // Modal propio: Alert.alert / window.confirm fallan o no se ven bien en Expo web/móvil
+  const deleteViatico = (id: string) => {
+    if (!isAdmin) return;
+    setDeleteConfirmId(String(id));
+  };
+
+  const proceedDeleteViatico = async () => {
+    const id = deleteConfirmId;
+    if (!id) return;
+    setDeleteConfirmId(null);
+    try {
+      await api.delete(`/viatics/${id}`);
+      setViaticos((prev) => prev.filter((v) => v.id !== id));
+      notify("Listo", "Gasto eliminado correctamente.");
+    } catch (e) {
+      notify("Error", "No se pudo eliminar el gasto.");
+    }
+  };
+
+  const closeDeleteConfirm = () => setDeleteConfirmId(null);
+
+  const renderDeleteConfirmModal = () => {
+    if (!deleteConfirmId) return null;
+
+    const card = (
+      <View
+        style={[styles.confirmCard, isNarrowList && styles.confirmCardMobile]}
+        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+      >
+        <View style={styles.confirmIconBadge}>
+          <FontAwesome5 name="trash-alt" size={18} color="#ffffff" />
+        </View>
+        <Text style={styles.confirmTitle}>Eliminar gasto</Text>
+        <Text style={styles.confirmMessage}>
+          ¿Estás seguro de que deseas eliminar este gasto? Esta acción no se puede deshacer.
+        </Text>
+        <View style={styles.confirmActions}>
+          <TouchableOpacity
+            style={styles.confirmCancelBtn}
+            onPress={closeDeleteConfirm}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.confirmCancelText}>Cancelar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.confirmDeleteBtn}
+            onPress={() => {
+              void proceedDeleteViatico();
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.confirmDeleteText}>Eliminar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+
+    const overlay = (
+      <View
+        style={[styles.confirmOverlay, styles.confirmOverlayWeb]}
+        pointerEvents="box-none"
+      >
+        <Pressable style={styles.confirmBackdrop} onPress={closeDeleteConfirm} />
+        {card}
+      </View>
+    );
 
     if (Platform.OS === "web") {
-      const confirmed = window.confirm("¿Estás seguro de que deseas eliminar este gasto?");
-      if (confirmed) await proceedWithDelete();
-      return;
+      return <Portal>{overlay}</Portal>;
     }
 
-    Alert.alert("Confirmar eliminación", "¿Estás seguro de que deseas eliminar este gasto?", [
-      { text: "Cancelar", style: "cancel" },
-      { text: "Eliminar", style: "destructive", onPress: () => { void proceedWithDelete(); } },
-    ]);
+    return (
+      <Modal visible transparent animationType="fade" onRequestClose={closeDeleteConfirm}>
+        {overlay}
+      </Modal>
+    );
   };
 
   const formatTotal = (value: number | string | undefined) => {
@@ -2013,6 +2081,26 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
               </View>
             ) : (
               <View style={styles.toolbarRightActionsMobile}>
+                <View style={styles.filterBlock}>
+                  <Text style={styles.toolbarLabel}>Periodo exportar</Text>
+                  <View style={[styles.segmentedControl, styles.segmentedControlMobile]}>
+                    {filterOptions.map((opt) => {
+                      const isActive = filter === opt.value;
+                      return (
+                        <TouchableOpacity
+                          key={opt.value}
+                          style={[styles.filterPill, styles.filterPillMobile, isActive && styles.filterPillActive]}
+                          onPress={() => setFilter(opt.value)}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={[styles.filterPillText, isActive && styles.filterPillTextActive]}>
+                            {opt.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
                 <TouchableOpacity
                   style={[styles.exportButton, styles.exportButtonMobile]}
                   onPress={exportViaticosToExcel}
@@ -2242,6 +2330,8 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
           </View>
         </Modal>
       )}
+
+      {renderDeleteConfirmModal()}
     </View>
   );
 }
@@ -2249,6 +2339,102 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
 
 const styles = StyleSheet.create({
   container: { flex: 1, paddingVertical: 4, backgroundColor: "transparent" },
+  confirmOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  confirmOverlayWeb: {
+    ...StyleSheet.absoluteFillObject,
+    position: "fixed" as any,
+    zIndex: 10050,
+  },
+  confirmBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15, 23, 42, 0.5)",
+  },
+  confirmCard: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: "#ffffff",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 22,
+    alignItems: "center",
+    gap: 12,
+    zIndex: 1,
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 20px 48px rgba(0,0,0,0.18)" as any }
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.18,
+          shadowRadius: 20,
+          shadowOffset: { width: 0, height: 10 },
+          elevation: 14,
+        }),
+  },
+  confirmCardMobile: {
+    maxWidth: "100%",
+    padding: 18,
+  },
+  confirmIconBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "#dc2626",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  confirmTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111111",
+    textAlign: "center",
+  },
+  confirmMessage: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#6b7280",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  confirmActions: {
+    flexDirection: "row",
+    gap: 10,
+    width: "100%",
+    marginTop: 8,
+  },
+  confirmCancelBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmCancelText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#374151",
+  },
+  confirmDeleteBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 999,
+    backgroundColor: "#dc2626",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmDeleteText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#ffffff",
+  },
   containerNarrow: { marginHorizontal: -6 },
   pageScroll: { flex: 1, minHeight: 0 },
   pageScrollContent: { paddingBottom: 28, flexGrow: 1 },

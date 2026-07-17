@@ -1,6 +1,6 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useState } from "react";
-import { Alert, Modal, Platform, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { Alert, Modal, Platform, Pressable, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { TextInput, Portal } from "react-native-paper";
 import { api } from "../services/api";
 import { User } from "../types";
@@ -17,6 +17,7 @@ export default function AdminPage() {
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [formMessage, setFormMessage] = useState("");
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   const notify = (title: string, message: string) => {
     if (Platform.OS === "web") {
@@ -178,31 +179,80 @@ export default function AdminPage() {
       setSaving(false);
     }
   };
-const deleteUser =async (id:string)=>{
-  let confirmed = false ;
-  if (Platform.OS === "web"){
-    confirmed=window.confirm("¿Desea eliminar este usuario?");
-    if (!confirmed) return ;
-  }else {
-    confirmed =await new  Promise<boolean>((resolve)=>{
-      Alert.alert("Confirmar", "¿Desea eliminar este usuario?",[
-        {text:"Cancelar", style:"cancel" , onPress:()=>resolve (false)},
-        {text:"Eliminar", style:"destructive", onPress:()=>resolve(true)},
-      ],
-      {cancelable:true}
+  // Modal propio: Alert.alert / window.confirm fallan o no se ven bien en Expo web/móvil
+  const deleteUser = (id: string) => {
+    setDeleteConfirmId(String(id));
+  };
+
+  const proceedDeleteUser = async () => {
+    const id = deleteConfirmId;
+    if (!id) return;
+    setDeleteConfirmId(null);
+    try {
+      await api.delete(`/users/${id}`);
+      setUsers((prevUsers) => prevUsers.filter((u) => u._id !== id));
+      notify("Listo", "Usuario eliminado correctamente.");
+    } catch (error: any) {
+      console.error("Error eliminando usuario", error);
+      notify("Error", "No se pudo eliminar el usuario.");
+    }
+  };
+
+  const closeDeleteConfirm = () => setDeleteConfirmId(null);
+
+  const renderDeleteConfirmModal = () => {
+    if (!deleteConfirmId) return null;
+
+    const card = (
+      <View
+        style={[styles.confirmCard, isMobile && styles.confirmCardMobile]}
+        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+      >
+        <View style={styles.confirmIconBadge}>
+          <FontAwesome5 name="trash-alt" size={18} color="#ffffff" />
+        </View>
+        <Text style={styles.confirmTitle}>Eliminar usuario</Text>
+        <Text style={styles.confirmMessage}>
+          ¿Estás seguro de que deseas eliminar este usuario? Esta acción no se puede deshacer.
+        </Text>
+        <View style={styles.confirmActions}>
+          <TouchableOpacity
+            style={styles.confirmCancelBtn}
+            onPress={closeDeleteConfirm}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.confirmCancelText}>Cancelar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.confirmDeleteBtn}
+            onPress={() => {
+              void proceedDeleteUser();
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.confirmDeleteText}>Eliminar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     );
-    });
-    if (!confirmed)return;
-  }
-  try {
-    const res =await api.delete(`/users/${id}`);
-    setUsers((prevUsers)=>prevUsers.filter((u)=>u._id !== id));
-    Alert.alert("Exito","Usuario eliminando correctamente");
-  }catch (error:any){
-    console.error("Error  eliminando usuario",error);
-    Alert.alert("Error","No se pudo eliminar el usuario");
-  }
-};
+
+    const overlay = (
+      <View style={[styles.confirmOverlay, styles.confirmOverlayWeb]} pointerEvents="box-none">
+        <Pressable style={styles.confirmBackdrop} onPress={closeDeleteConfirm} />
+        {card}
+      </View>
+    );
+
+    if (Platform.OS === "web") {
+      return <Portal>{overlay}</Portal>;
+    }
+
+    return (
+      <Modal visible transparent animationType="fade" onRequestClose={closeDeleteConfirm}>
+        {overlay}
+      </Modal>
+    );
+  };
   const getContactLine = (item: User) => {
     if (item.email) return { icon: "envelope" as const, text: item.email };
     if (item.contacto?.trim()) return { icon: "phone" as const, text: item.contacto };
@@ -504,6 +554,8 @@ const deleteUser =async (id:string)=>{
           </View>
         </Modal>
       )}
+
+      {renderDeleteConfirmModal()}
     </View>
   );
 }
@@ -513,6 +565,102 @@ const styles = StyleSheet.create({
     paddingHorizontal: 0,
     paddingVertical: 4,
     backgroundColor: "transparent",
+  },
+  confirmOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  confirmOverlayWeb: {
+    ...StyleSheet.absoluteFillObject,
+    position: "fixed" as any,
+    zIndex: 10050,
+  },
+  confirmBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15, 23, 42, 0.5)",
+  },
+  confirmCard: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: "#ffffff",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 22,
+    alignItems: "center",
+    gap: 12,
+    zIndex: 1,
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 20px 48px rgba(0,0,0,0.18)" as any }
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.18,
+          shadowRadius: 20,
+          shadowOffset: { width: 0, height: 10 },
+          elevation: 14,
+        }),
+  },
+  confirmCardMobile: {
+    maxWidth: "100%",
+    padding: 18,
+  },
+  confirmIconBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "#dc2626",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  confirmTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111111",
+    textAlign: "center",
+  },
+  confirmMessage: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#6b7280",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  confirmActions: {
+    flexDirection: "row",
+    gap: 10,
+    width: "100%",
+    marginTop: 8,
+  },
+  confirmCancelBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmCancelText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#374151",
+  },
+  confirmDeleteBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 999,
+    backgroundColor: "#dc2626",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmDeleteText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#ffffff",
   },
   pageHeader: {
     flexDirection: "row",

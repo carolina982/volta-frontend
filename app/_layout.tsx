@@ -1,6 +1,18 @@
 import { Stack } from "expo-router";
+import * as Notifications from "expo-notifications";
 import { MD3LightTheme, Provider as PaperProvider } from "react-native-paper";
 import { StoreProvider } from "@/context/Store";
+
+// Cómo se comporta la app cuando llega una notificación estando abierta (primer plano).
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
 const voltaTheme = {
   ...MD3LightTheme,
