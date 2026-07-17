@@ -1,5 +1,4 @@
 import { FontAwesome5 } from "@expo/vector-icons";
-import { Picker } from "@react-native-picker/picker";
 import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -116,6 +115,7 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
   // Inventario de entrega (texto + firma)
   const [inventarioTexto, setInventarioTexto] = useState("");
   const [invOperadorId, setInvOperadorId] = useState("");
+  const [invOperadorSheetOpen, setInvOperadorSheetOpen] = useState(false);
   const [operadores, setOperadores] = useState<{ id: string; nombre: string }[]>([]);
   const [savingInv, setSavingInv] = useState(false);
   const signatureRef = useRef<SignaturePadHandle>(null);
@@ -133,6 +133,8 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
   const [imagenUrl, setImagenUrl] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteInvConfirmId, setDeleteInvConfirmId] = useState<string | null>(null);
+  const [viewInv, setViewInv] = useState<InventarioUnidad | null>(null);
+  const [invScrollEnabled, setInvScrollEnabled] = useState(true);
 
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
@@ -185,6 +187,8 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
     setSavingInv(false);
     setInventarioTexto("");
     setInvOperadorId("");
+    setInvOperadorSheetOpen(false);
+    setInvScrollEnabled(true);
   };
 
   const openModal = (unit?: Unit) => {
@@ -361,24 +365,128 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
       </View>
     );
 
-    const overlay = (
-      <View
-        style={[styles.confirmOverlay, styles.confirmOverlayWeb]}
-        pointerEvents="box-none"
-      >
+    return (
+      <View style={styles.embedOverlay} pointerEvents="box-none">
         <Pressable style={styles.confirmBackdrop} onPress={closeDeleteInvConfirm} />
         {card}
       </View>
     );
+  };
 
-    if (Platform.OS === "web") {
-      return <Portal>{overlay}</Portal>;
-    }
+  const renderViewInvModal = () => {
+    if (!viewInv) return null;
+    const inv = viewInv;
+
+    const card = (
+      <View
+        style={[styles.viewInvCard, isMobile && styles.viewInvCardMobile]}
+        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+      >
+        <View style={styles.viewInvHeader}>
+          <View style={styles.invHistoryHeaderLeft}>
+            <FontAwesome5 name="clipboard-check" size={16} color="#111111" />
+            <Text style={styles.viewInvTitle}>Inventario</Text>
+          </View>
+          <TouchableOpacity onPress={() => setViewInv(null)} hitSlop={8}>
+            <FontAwesome5 name="times" size={18} color="#6b7280" />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView style={styles.viewInvScroll} contentContainerStyle={{ paddingBottom: 8 }}>
+          <Text style={styles.viewInvMeta}>
+            <Text style={styles.invAutoInfoLabel}>Fecha: </Text>
+            {formatInvFecha(inv.fecha)}
+          </Text>
+          {inv.operadorNombre ? (
+            <Text style={styles.viewInvMeta}>
+              <Text style={styles.invAutoInfoLabel}>Operador: </Text>
+              {inv.operadorNombre}
+            </Text>
+          ) : null}
+
+          <Text style={styles.viewInvSectionLabel}>Contenido</Text>
+          <Text style={styles.viewInvContent}>{inv.contenido}</Text>
+
+          {inv.firmaUrl ? (
+            <>
+              <Text style={styles.viewInvSectionLabel}>Firma</Text>
+              <Image
+                source={{ uri: inv.firmaUrl }}
+                style={styles.viewInvSignature}
+                resizeMode="contain"
+              />
+            </>
+          ) : null}
+
+          {inv.creadoPorNombre ? (
+            <Text style={styles.invHistoryBy}>Registrado por {inv.creadoPorNombre}</Text>
+          ) : null}
+        </ScrollView>
+
+        <TouchableOpacity
+          style={styles.viewInvCloseBtn}
+          onPress={() => setViewInv(null)}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.viewInvCloseText}>Cerrar</Text>
+        </TouchableOpacity>
+      </View>
+    );
 
     return (
-      <Modal visible transparent animationType="fade" onRequestClose={closeDeleteInvConfirm}>
-        {overlay}
-      </Modal>
+      <View style={styles.embedOverlay} pointerEvents="box-none">
+        <Pressable style={styles.confirmBackdrop} onPress={() => setViewInv(null)} />
+        {card}
+      </View>
+    );
+  };
+
+  const renderInvOperadorSheet = () => {
+    if (!invOperadorSheetOpen) return null;
+    const close = () => setInvOperadorSheetOpen(false);
+    const card = (
+      <View
+        style={[styles.invSheetCard, isMobile && styles.invSheetCardMobile]}
+        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+      >
+        <View style={styles.invSheetHeader}>
+          <Text style={styles.invSheetTitle}>Selecciona operador</Text>
+          <TouchableOpacity onPress={close} hitSlop={8}>
+            <FontAwesome5 name="times" size={16} color="#6b7280" />
+          </TouchableOpacity>
+        </View>
+        <ScrollView style={styles.invSheetList} keyboardShouldPersistTaps="handled">
+          {operadores.length === 0 ? (
+            <Text style={styles.invSheetEmpty}>No hay operadores disponibles</Text>
+          ) : (
+            operadores.map((op) => {
+              const active = op.id === invOperadorId;
+              return (
+                <TouchableOpacity
+                  key={op.id}
+                  style={[styles.invSheetItem, active && styles.invSheetItemActive]}
+                  onPress={() => {
+                    setInvOperadorId(op.id);
+                    close();
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.invSheetItemText, active && styles.invSheetItemTextActive]}>
+                    {op.nombre}
+                  </Text>
+                  {active ? <FontAwesome5 name="check" size={13} color="#111111" /> : null}
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </ScrollView>
+      </View>
+    );
+    return (
+      <View style={styles.embedOverlay} pointerEvents="box-none">
+        <Pressable style={styles.confirmBackdrop} onPress={close} />
+        {card}
+      </View>
     );
   };
 
@@ -540,74 +648,77 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
 
   const renderItem = ({ item }: { item: Unit }) => {
     const estadoStyle = getEstadoStyle(item.estado);
-    const hasRemolque = unidadesConRemolque.includes(item.nombre);
     const invCount = item.inventarios?.length || 0;
 
     return (
       <View style={[styles.card, isMobile ? styles.cardMobile : styles.cardDesktop]}>
-        <TouchableOpacity
-          style={styles.imageWrap}
-          onPress={() => seleccionarImagenUnidad(item.id)}
-          activeOpacity={0.85}
-        >
-          <UnitThumb uri={item.imagenUrl} />
-          <View style={styles.photoBadge}>
-            <FontAwesome5 name="camera" size={10} color="#ffffff" />
-          </View>
-        </TouchableOpacity>
-
-        <View style={styles.cardBody}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.unitName}>{item.nombre}</Text>
-            <View style={[styles.estadoBadge, estadoStyle.badge]}>
-              <FontAwesome5 name={estadoStyle.icon} size={10} color={estadoStyle.iconColor} />
-              <Text style={[styles.estadoText, estadoStyle.text]}>{item.estado}</Text>
+        <View style={styles.cardTop}>
+          <TouchableOpacity
+            style={styles.imageWrap}
+            onPress={() => seleccionarImagenUnidad(item.id)}
+            activeOpacity={0.85}
+          >
+            <UnitThumb uri={item.imagenUrl} />
+            <View style={styles.photoBadge}>
+              <FontAwesome5 name="camera" size={9} color="#ffffff" />
             </View>
-          </View>
+          </TouchableOpacity>
 
-          <View style={styles.specGrid}>
-            <View style={styles.specItem}>
-              <Text style={styles.specLabel}>Modelo</Text>
-              <Text style={styles.specValue} numberOfLines={1}>
+          <View style={styles.cardTopInfo}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.unitName} numberOfLines={1}>
+                {item.nombre}
+              </Text>
+              <View style={[styles.estadoBadge, estadoStyle.badge]}>
+                <FontAwesome5 name={estadoStyle.icon} size={9} color={estadoStyle.iconColor} />
+                <Text style={[styles.estadoText, estadoStyle.text]}>{item.estado}</Text>
+              </View>
+            </View>
+            {item.modelo ? (
+              <Text style={styles.unitModelo} numberOfLines={1}>
                 {item.modelo}
               </Text>
-            </View>
-            <View style={styles.specItem}>
-              <Text style={styles.specLabel}>Capacidad</Text>
-              <Text style={styles.specValue}>{item.capacidad}</Text>
-            </View>
-            <View style={styles.specItem}>
-              <Text style={styles.specLabel}>Placas</Text>
-              <Text style={styles.specValue}>{item.placas}</Text>
-            </View>
-            <View style={styles.specItem}>
-              <Text style={styles.specLabel}>Inventario</Text>
-              <Text style={styles.specValue}>
-                {invCount > 0 ? `${invCount} PDF${invCount === 1 ? "" : "s"}` : "Sin archivo"}
-              </Text>
-            </View>
-            {hasRemolque ? (
-              <View style={styles.specItem}>
-                <Text style={styles.specLabel}>Remolque</Text>
-                <Text style={styles.specValue} numberOfLines={1}>
-                  {item.tipoRemolque || "Ninguno"}
-                </Text>
-              </View>
             ) : null}
           </View>
+        </View>
 
-          <View style={styles.cardActions}>
-            <TouchableOpacity style={styles.iconAction} onPress={() => openModal(item)} activeOpacity={0.85}>
-              <FontAwesome5 name="pen" size={13} color="#111111" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.iconAction, styles.iconActionDanger]}
-              onPress={() => deleteUnit(item.id)}
-              activeOpacity={0.85}
-            >
-              <FontAwesome5 name="trash-alt" size={13} color="#dc2626" />
-            </TouchableOpacity>
+        <View style={styles.specGrid}>
+          <View style={styles.specItem}>
+            <Text style={styles.specLabel}>Placas</Text>
+            <Text style={styles.specValue} numberOfLines={1}>
+              {item.placas || "—"}
+            </Text>
           </View>
+          <View style={styles.specItem}>
+            <Text style={styles.specLabel}>Capacidad</Text>
+            <Text style={styles.specValue} numberOfLines={1}>
+              {item.capacidad || "—"}
+            </Text>
+          </View>
+          <View style={styles.specItem}>
+            <Text style={styles.specLabel}>Inventarios</Text>
+            <Text style={styles.specValue} numberOfLines={1}>
+              {invCount > 0 ? `${invCount} registro${invCount === 1 ? "" : "s"}` : "Sin registros"}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.cardActions}>
+          <TouchableOpacity
+            style={styles.editBtn}
+            onPress={() => openModal(item)}
+            activeOpacity={0.85}
+          >
+            <FontAwesome5 name="pen" size={12} color="#111111" />
+            <Text style={styles.editBtnText}>Editar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.deleteBtnCard}
+            onPress={() => deleteUnit(item.id)}
+            activeOpacity={0.85}
+          >
+            <FontAwesome5 name="trash-alt" size={12} color="#dc2626" />
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -694,8 +805,8 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
                   </Text>
                   <Text style={styles.modalSubtitle}>
                     {editingUnit
-                      ? "Actualiza datos e inventario PDF"
-                      : "Registra la unidad; el inventario se sube después de guardar"}
+                      ? "Actualiza datos y registra inventarios de entrega"
+                      : "Registra la unidad; el inventario se agrega después de guardar"}
                   </Text>
                 </View>
               </View>
@@ -712,6 +823,7 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
               ]}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator
+              scrollEnabled={invScrollEnabled}
             >
               <View style={[styles.formSection, isMobile && styles.formSectionMobile]}>
                 <Text style={styles.formSectionTitle}>Datos generales</Text>
@@ -782,35 +894,6 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
                 </View>
               </View>
 
-              {mostrarRemolque ? (
-                <View style={[styles.formSection, isMobile && styles.formSectionMobile]}>
-                  <Text style={styles.formSectionTitle}>Remolque</Text>
-                  <Text style={styles.fieldLabel}>Tipo</Text>
-                  <View style={styles.pickerWrap}>
-                    <Picker selectedValue={tipoRemolque} onValueChange={setTipoRemolque}>
-                      <Picker.Item label="Ninguno" value="" />
-                      <Picker.Item label="Lowboy" value="Lowboy" />
-                      <Picker.Item label="Caja Seca" value="Caja Seca" />
-                    </Picker>
-                  </View>
-                  {tipoRemolque === "Lowboy" || tipoRemolque === "Caja Seca" ? (
-                    <>
-                      <Text style={styles.fieldLabel}>Placa del remolque</Text>
-                      <TextInput
-                        value={placaRemolque}
-                        onChangeText={setPlacaRemolque}
-                        mode="outlined"
-                        outlineColor="#e5e7eb"
-                        activeOutlineColor="#111111"
-                        dense
-                        style={styles.input}
-                        contentStyle={styles.inputContent}
-                      />
-                    </>
-                  ) : null}
-                </View>
-              ) : null}
-
               <View style={[styles.formSection, isMobile && styles.formSectionMobile]}>
                 <View style={styles.invSectionHeader}>
                   <View style={styles.invSectionHeaderLeft}>
@@ -835,72 +918,110 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
                       registro se guarda en el historial y no se sobrescribe.
                     </Text>
 
-                    <Text style={styles.invFieldLabel}>Operador que recibe la unidad</Text>
-                    <View style={styles.invPickerWrapper}>
-                      <Picker
-                        selectedValue={invOperadorId}
-                        onValueChange={(v) => setInvOperadorId(String(v))}
-                        style={styles.invPicker}
+                    <View style={styles.invFormCard}>
+                      <View style={styles.invFormCardHeader}>
+                        <FontAwesome5 name="plus-circle" size={13} color="#111111" />
+                        <Text style={styles.invFormCardTitle}>Nuevo inventario de entrega</Text>
+                      </View>
+
+                      <Text style={styles.invFieldLabel}>Operador que recibe la unidad</Text>
+                      <Pressable
+                        style={styles.invSelectTrigger}
+                        onPress={() => setInvOperadorSheetOpen(true)}
                       >
-                        <Picker.Item label="Selecciona un operador…" value="" />
-                        {operadores.map((op) => (
-                          <Picker.Item key={op.id} label={op.nombre} value={op.id} />
-                        ))}
-                      </Picker>
-                    </View>
+                        <Text
+                          style={[
+                            styles.invSelectText,
+                            !invOperadorId && styles.invSelectPlaceholder,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {operadores.find((o) => o.id === invOperadorId)?.nombre ||
+                            "Selecciona un operador…"}
+                        </Text>
+                        <FontAwesome5 name="chevron-down" size={12} color="#6b7280" />
+                      </Pressable>
 
-                    <Text style={styles.invFieldLabel}>Contenido del inventario</Text>
-                    <TextInput
-                      mode="outlined"
-                      value={inventarioTexto}
-                      onChangeText={setInventarioTexto}
-                      placeholder="Describe todo el contenido y estado de la unidad…"
-                      multiline
-                      numberOfLines={6}
-                      style={styles.invTextArea}
-                      outlineColor="#e5e7eb"
-                      activeOutlineColor="#111111"
-                    />
+                      <Text style={styles.invFieldLabel}>Contenido del inventario</Text>
+                      <TextInput
+                        mode="outlined"
+                        value={inventarioTexto}
+                        onChangeText={setInventarioTexto}
+                        placeholder="Describe todo el contenido y estado de la unidad…"
+                        multiline
+                        numberOfLines={6}
+                        style={styles.invTextArea}
+                        outlineColor="#e5e7eb"
+                        activeOutlineColor="#111111"
+                      />
 
-                    <View style={styles.invSignHeaderRow}>
-                      <Text style={styles.invFieldLabel}>Firma digital</Text>
-                      <TouchableOpacity onPress={() => signatureRef.current?.clear()} hitSlop={8}>
-                        <Text style={styles.invClearSign}>Limpiar firma</Text>
+                      <View style={styles.invSignHeaderRow}>
+                        <Text style={styles.invFieldLabel}>Firma digital</Text>
+                        <TouchableOpacity
+                          onPress={() => signatureRef.current?.clear()}
+                          hitSlop={8}
+                          style={styles.invClearSignBtn}
+                        >
+                          <FontAwesome5 name="eraser" size={11} color="#2563eb" />
+                          <Text style={styles.invClearSign}>Limpiar</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View
+                        style={styles.invSignFrame}
+                        onTouchStart={() => setInvScrollEnabled(false)}
+                        onTouchEnd={() => setInvScrollEnabled(true)}
+                        onTouchCancel={() => setInvScrollEnabled(true)}
+                      >
+                        <SignaturePad
+                          ref={signatureRef}
+                          height={isMobile ? 220 : 180}
+                          onBegin={() => setInvScrollEnabled(false)}
+                          onEnd={() => setInvScrollEnabled(true)}
+                        />
+                        <Text style={styles.invSignBaseline}>Firme dentro del recuadro</Text>
+                      </View>
+
+                      <View style={styles.invAutoInfo}>
+                        <View style={styles.invAutoInfoRow}>
+                          <FontAwesome5 name="user-shield" size={11} color="#6b7280" />
+                          <Text style={styles.invAutoInfoText}>
+                            <Text style={styles.invAutoInfoLabel}>Registrado por: </Text>
+                            {`${currentUser?.nombre || ""} ${currentUser?.apellido || ""}`.trim() ||
+                              "Administrador"}
+                          </Text>
+                        </View>
+                        <View style={styles.invAutoInfoRow}>
+                          <FontAwesome5 name="clock" size={11} color="#6b7280" />
+                          <Text style={styles.invAutoInfoText}>
+                            <Text style={styles.invAutoInfoLabel}>Fecha y hora: </Text>
+                            se registran automáticamente al guardar.
+                          </Text>
+                        </View>
+                      </View>
+
+                      <TouchableOpacity
+                        style={[styles.uploadInvBtn, savingInv && styles.uploadInvBtnDisabled]}
+                        onPress={() => {
+                          void guardarInventario();
+                        }}
+                        disabled={savingInv}
+                        activeOpacity={0.85}
+                      >
+                        {savingInv ? (
+                          <ActivityIndicator color="#ffffff" />
+                        ) : (
+                          <>
+                            <FontAwesome5 name="save" size={14} color="#ffffff" />
+                            <Text style={styles.uploadInvBtnText}>Guardar inventario</Text>
+                          </>
+                        )}
                       </TouchableOpacity>
                     </View>
-                    <SignaturePad ref={signatureRef} height={180} />
 
-                    <View style={styles.invAutoInfo}>
-                      <Text style={styles.invAutoInfoText}>
-                        <Text style={styles.invAutoInfoLabel}>Registrado por: </Text>
-                        {`${currentUser?.nombre || ""} ${currentUser?.apellido || ""}`.trim() ||
-                          "Administrador"}
-                      </Text>
-                      <Text style={styles.invAutoInfoText}>
-                        <Text style={styles.invAutoInfoLabel}>Fecha y hora: </Text>
-                        se registran automáticamente al guardar.
-                      </Text>
+                    <View style={styles.invHistoryTitleRow}>
+                      <FontAwesome5 name="history" size={13} color="#111111" />
+                      <Text style={styles.invHistoryTitle}>Historial de inventarios</Text>
                     </View>
-
-                    <TouchableOpacity
-                      style={[styles.uploadInvBtn, savingInv && styles.uploadInvBtnDisabled]}
-                      onPress={() => {
-                        void guardarInventario();
-                      }}
-                      disabled={savingInv}
-                      activeOpacity={0.85}
-                    >
-                      {savingInv ? (
-                        <ActivityIndicator color="#ffffff" />
-                      ) : (
-                        <>
-                          <FontAwesome5 name="save" size={14} color="#ffffff" />
-                          <Text style={styles.uploadInvBtnText}>Guardar inventario</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-
-                    <Text style={styles.invHistoryTitle}>Historial de inventarios</Text>
                     {(editingUnit.inventarios || []).length === 0 ? (
                       <View style={styles.invEmpty}>
                         <FontAwesome5 name="folder-open" size={18} color="#9ca3af" />
@@ -926,14 +1047,6 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
                                     {formatInvFecha(inv.fecha)}
                                   </Text>
                                 </View>
-                                <TouchableOpacity
-                                  style={styles.invDeleteBtn}
-                                  onPress={() => deleteInventario(inv._id)}
-                                  activeOpacity={0.85}
-                                  hitSlop={8}
-                                >
-                                  <FontAwesome5 name="trash-alt" size={13} color="#dc2626" />
-                                </TouchableOpacity>
                               </View>
                               {inv.operadorNombre ? (
                                 <Text style={styles.invHistoryMeta}>
@@ -941,7 +1054,9 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
                                   {inv.operadorNombre}
                                 </Text>
                               ) : null}
-                              <Text style={styles.invHistoryContent}>{inv.contenido}</Text>
+                              <Text style={styles.invHistoryContent} numberOfLines={4}>
+                                {inv.contenido}
+                              </Text>
                               {inv.firmaUrl ? (
                                 <Image
                                   source={{ uri: inv.firmaUrl }}
@@ -954,6 +1069,25 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
                                   Registrado por {inv.creadoPorNombre}
                                 </Text>
                               ) : null}
+
+                              <View style={styles.invCardActions}>
+                                <TouchableOpacity
+                                  style={styles.invViewBtn}
+                                  onPress={() => setViewInv(inv)}
+                                  activeOpacity={0.85}
+                                >
+                                  <FontAwesome5 name="eye" size={12} color="#111111" />
+                                  <Text style={styles.invViewBtnText}>Ver detalle</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={styles.invDeleteBtnFull}
+                                  onPress={() => deleteInventario(inv._id)}
+                                  activeOpacity={0.85}
+                                >
+                                  <FontAwesome5 name="trash-alt" size={12} color="#dc2626" />
+                                  <Text style={styles.invDeleteBtnText}>Eliminar</Text>
+                                </TouchableOpacity>
+                              </View>
                             </View>
                           ))}
                       </View>
@@ -967,7 +1101,7 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
               {isMobile ? (
                 <>
                   <TouchableOpacity
-                    style={[styles.saveButton, saving && styles.btnDisabled]}
+                    style={[styles.saveButton, styles.actionBtnMobile, saving && styles.btnDisabled]}
                     onPress={() => {
                       void saveUnit();
                     }}
@@ -981,7 +1115,7 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
                     )}
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={styles.cancelButton}
+                    style={[styles.cancelButton, styles.actionBtnMobile]}
                     onPress={closeModal}
                     disabled={saving}
                     activeOpacity={0.85}
@@ -1017,11 +1151,13 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
               )}
             </View>
           </SafeAreaView>
+          {renderInvOperadorSheet()}
+          {renderDeleteInvConfirmModal()}
+          {renderViewInvModal()}
         </View>
       </Modal>
 
       {renderDeleteConfirmModal()}
-      {renderDeleteInvConfirmModal()}
     </View>
   );
 }
@@ -1038,6 +1174,15 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     position: "fixed" as any,
     zIndex: 10050,
+  },
+  embedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    position: (Platform.OS === "web" ? "fixed" : "absolute") as any,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+    zIndex: 10050,
+    elevation: 50,
   },
   confirmBackdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -1205,13 +1350,12 @@ const styles = StyleSheet.create({
   imageWrap: {
     position: "relative",
     alignSelf: "flex-start",
-    marginBottom: 12,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
-  unitImage: { width: 88, height: 88, borderRadius: 14, backgroundColor: "#e5e7eb" },
+  unitImage: { width: 72, height: 72, borderRadius: 14, backgroundColor: "#e5e7eb" },
   unitImagePlaceholder: {
-    width: 88,
-    height: 88,
+    width: 72,
+    height: 72,
     borderRadius: 14,
     backgroundColor: "#f3f4f6",
     borderWidth: 1,
@@ -1233,14 +1377,21 @@ const styles = StyleSheet.create({
     borderColor: "#ffffff",
   },
   cardBody: { flex: 1, minWidth: 0 },
+  cardTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 12,
+  },
+  cardTopInfo: { flex: 1, minWidth: 0 },
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 8,
-    marginBottom: 12,
   },
-  unitName: { fontSize: 20, fontWeight: "800", color: "#111111", flex: 1 },
+  unitName: { fontSize: 18, fontWeight: "800", color: "#111111", flex: 1 },
+  unitModelo: { fontSize: 13, color: "#6b7280", fontWeight: "600", marginTop: 3 },
   estadoBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -1258,8 +1409,8 @@ const styles = StyleSheet.create({
   estadoTextOcupado: { color: "#dc2626" },
   specGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
   specItem: {
-    minWidth: "46%",
-    flexGrow: 1,
+    flex: 1,
+    minWidth: 92,
     backgroundColor: "#ffffff",
     borderRadius: 10,
     borderWidth: 1,
@@ -1274,20 +1425,33 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.4,
   },
-  specValue: { fontSize: 13, fontWeight: "600", color: "#111111", marginTop: 2 },
-  cardActions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
-  iconAction: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  specValue: { fontSize: 13, fontWeight: "700", color: "#111111", marginTop: 3 },
+  cardActions: { flexDirection: "row", gap: 8, alignItems: "stretch" },
+  editBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    height: 42,
+    borderRadius: 12,
     backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: "#e5e7eb",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  editBtnText: { fontSize: 13, fontWeight: "800", color: "#111111" },
+  deleteBtnCard: {
+    width: 48,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: "#fef2f2",
+    borderWidth: 1,
+    borderColor: "#fecaca",
     alignItems: "center",
     justifyContent: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
-  iconActionDanger: { backgroundColor: "#fef2f2", borderColor: "#fecaca" },
 
   modalOverlay: {
     flex: 1,
@@ -1428,6 +1592,7 @@ const styles = StyleSheet.create({
   },
   invCountPillText: { color: "#ffffff", fontWeight: "800", fontSize: 12 },
   invHint: { fontSize: 13, color: "#6b7280", lineHeight: 18, marginBottom: 12 },
+  remolqueHintText: { fontSize: 12, color: "#6b7280", lineHeight: 16, marginTop: 6 },
   pickPdfBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1463,7 +1628,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 14,
     minHeight: 48,
-    marginBottom: 14,
+    marginBottom: 0,
   },
   uploadInvBtnDisabled: { opacity: 0.5 },
   uploadInvBtnText: { color: "#ffffff", fontWeight: "800", fontSize: 14 },
@@ -1485,15 +1650,68 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     marginTop: 4,
   },
-  invPickerWrapper: {
+  invSelectTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
     borderWidth: 1,
     borderColor: "#e5e7eb",
     borderRadius: 12,
     backgroundColor: "#ffffff",
+    paddingHorizontal: 12,
+    height: 48,
     marginBottom: 12,
-    overflow: "hidden",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
-  invPicker: { width: "100%", color: "#111111" },
+  invSelectText: { flex: 1, fontSize: 14, fontWeight: "600", color: "#111111" },
+  invSelectPlaceholder: { color: "#9ca3af", fontWeight: "500" },
+  invSheetCard: {
+    width: "100%",
+    maxWidth: 420,
+    maxHeight: "70%",
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    overflow: "hidden",
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 20px 50px rgba(0,0,0,0.18)" as any }
+      : {}),
+  },
+  invSheetCardMobile: { maxWidth: "100%" },
+  invSheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+  },
+  invSheetTitle: { fontSize: 15, fontWeight: "800", color: "#111111" },
+  invSheetList: { maxHeight: 340 },
+  invSheetItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f6f7f9",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  invSheetItemActive: { backgroundColor: "#f8fafc" },
+  invSheetItemText: { fontSize: 14, fontWeight: "600", color: "#374151", flex: 1 },
+  invSheetItemTextActive: { color: "#111111", fontWeight: "800" },
+  invSheetEmpty: {
+    fontSize: 13,
+    color: "#9ca3af",
+    fontWeight: "600",
+    textAlign: "center",
+    paddingVertical: 24,
+  },
   invTextArea: {
     backgroundColor: "#ffffff",
     minHeight: 120,
@@ -1516,14 +1734,60 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
     gap: 4,
   },
-  invAutoInfoText: { fontSize: 12.5, color: "#374151", lineHeight: 18 },
+  invAutoInfoText: { fontSize: 12.5, color: "#374151", lineHeight: 18, flex: 1 },
   invAutoInfoLabel: { fontWeight: "800", color: "#111111" },
+  invAutoInfoRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  invFormCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
+    marginBottom: 18,
+  },
+  invFormCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+  },
+  invFormCardTitle: { fontSize: 13.5, fontWeight: "800", color: "#111111" },
+  invClearSignBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: "#eff6ff",
+  },
+  invSignFrame: {
+    borderRadius: 12,
+    backgroundColor: "#f8fafc",
+    padding: 6,
+    marginBottom: 12,
+  },
+  invSignBaseline: {
+    fontSize: 11,
+    color: "#9ca3af",
+    fontWeight: "600",
+    textAlign: "center",
+    marginTop: 6,
+  },
+  invHistoryTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 4,
+    marginBottom: 10,
+  },
   invHistoryTitle: {
     fontSize: 14,
     fontWeight: "800",
     color: "#111111",
-    marginTop: 8,
-    marginBottom: 10,
   },
   invHistoryCard: {
     backgroundColor: "#ffffff",
@@ -1568,6 +1832,85 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   invHistoryBy: { fontSize: 11.5, color: "#9ca3af", fontWeight: "600", marginTop: 2 },
+  invCardActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#f1f5f9",
+  },
+  invViewBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+  },
+  invViewBtnText: { fontSize: 13, fontWeight: "700", color: "#111111" },
+  invDeleteBtnFull: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    backgroundColor: "#fef2f2",
+  },
+  invDeleteBtnText: { fontSize: 13, fontWeight: "700", color: "#dc2626" },
+  viewInvCard: {
+    width: "100%",
+    maxWidth: 480,
+    maxHeight: "80%",
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
+    padding: 18,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  viewInvCardMobile: { maxWidth: "92%" },
+  viewInvHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  viewInvTitle: { fontSize: 16, fontWeight: "800", color: "#111111" },
+  viewInvScroll: { maxHeight: 420 },
+  viewInvMeta: { fontSize: 13, color: "#374151", marginBottom: 2 },
+  viewInvSectionLabel: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#111111",
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  viewInvContent: { fontSize: 14, color: "#111111", lineHeight: 20 },
+  viewInvSignature: {
+    width: "100%",
+    height: 160,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+  },
+  viewInvCloseBtn: {
+    marginTop: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: "#111111",
+    alignItems: "center",
+  },
+  viewInvCloseText: { color: "#ffffff", fontSize: 14, fontWeight: "800" },
   invList: { gap: 10 },
   invCard: {
     flexDirection: "row",
@@ -1610,11 +1953,16 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     borderTopWidth: 1,
     borderTopColor: "#f3f4f6",
+    backgroundColor: "#ffffff",
   },
   modalActionsMobile: {
     flexDirection: "column",
+    gap: 10,
     paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 24,
   },
+  actionBtnMobile: { flex: 0, width: "100%", alignSelf: "stretch" },
   cancelButton: {
     flex: 1,
     borderWidth: 1.5,

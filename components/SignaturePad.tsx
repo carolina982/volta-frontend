@@ -10,17 +10,29 @@ export interface SignaturePadHandle {
 
 interface Props {
   height?: number;
+  /** Se dispara al empezar/terminar un trazo (útil para bloquear el scroll del contenedor). */
+  onBegin?: () => void;
+  onEnd?: () => void;
 }
 
 const webStyle = `
   .m-signature-pad { box-shadow: none; border: none; margin: 0; }
   .m-signature-pad--body { border: none; }
+  .m-signature-pad--body canvas { touch-action: none; }
   .m-signature-pad--footer { display: none; }
-  body, html { width: 100%; height: 100%; margin: 0; padding: 0; }
+  body, html {
+    width: 100%; height: 100%; margin: 0; padding: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
 `;
 
 /** Pad de firma para iOS/Android (usa react-native-signature-canvas sobre WebView). */
-const SignaturePad = forwardRef<SignaturePadHandle, Props>(({ height = 200 }, ref) => {
+const SignaturePad = forwardRef<SignaturePadHandle, Props>(
+  ({ height = 200, onBegin, onEnd }, ref) => {
   const sigRef = useRef<any>(null);
   const resolverRef = useRef<((v: string) => void) | null>(null);
 
@@ -45,13 +57,16 @@ const SignaturePad = forwardRef<SignaturePadHandle, Props>(({ height = 200 }, re
           resolverRef.current?.("");
           resolverRef.current = null;
         }}
+        onBegin={onBegin}
+        onEnd={onEnd}
         autoClear={false}
         imageType="image/png"
         webStyle={webStyle}
       />
     </View>
   );
-});
+  }
+);
 
 SignaturePad.displayName = "SignaturePad";
 

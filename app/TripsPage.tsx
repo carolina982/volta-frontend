@@ -124,6 +124,7 @@ interface Unit {
   id: string;
   nombre: string;
   placa: string;
+  modelo?: string;
   tipoRemolque?: string;
   placaRemolque?: string;
   imagenUrl?: string;
@@ -131,18 +132,46 @@ interface Unit {
 interface User { id: string; nombre: string; apellido?: string; rol?: string }
 
 const UNIDADES_CON_REMOLQUE = ["002", "007"];
-const REMOLQUE_OPTIONS = [
-  { label: "Lowboy", value: "Lowboy" },
-  { label: "Caja Seca", value: "Caja Seca" },
-];
 
 const isUnidadConRemolque = (nombre?: string) =>
   Boolean(nombre && UNIDADES_CON_REMOLQUE.includes(String(nombre).trim()));
 
+/** Identificador del tractor = letra del tipo (L=Lowboy, C=Caja Seca) + número de la unidad. Ej: 002 → C002. */
+const buildRemolqueNombre = (tipo?: string, unitNombre?: string) => {
+  const num = String(unitNombre || "").trim();
+  if (!num || !tipo) return "";
+  const letra = tipo === "Lowboy" ? "L" : tipo === "Caja Seca" ? "C" : "";
+  if (!letra) return "";
+  return `${letra}${num}`;
+};
+
+/** ¿El nombre corresponde a una unidad-remolque? (empieza con L o C seguido de dígitos, ej. C002, L007) */
+const isRemolqueUnitName = (nombre?: string) =>
+  /^[LC]\s*\d/i.test(String(nombre || "").trim());
+
+/** Deriva el tipo (Lowboy/Caja Seca) a partir de la primera letra del identificador del remolque. */
+const tipoFromRemolqueNombre = (nombre?: string) => {
+  const first = String(nombre || "").trim().charAt(0).toUpperCase();
+  if (first === "L") return "Lowboy";
+  if (first === "C") return "Caja Seca";
+  return "";
+};
+
+/** Opciones de remolque = unidades cuyo nombre empieza con L/C (C002, C007, C008, L007…). */
+const buildRemolqueUnitOptions = (units: Unit[]) =>
+  units
+    .filter((u) => isRemolqueUnitName(u.nombre))
+    .sort((a, b) =>
+      String(a.nombre).localeCompare(String(b.nombre), "es", { numeric: true })
+    )
+    .map((u) => ({
+      label: `${u.nombre}${u.modelo ? ` · ${u.modelo}` : ""}`,
+      value: String(u.nombre || "").trim(),
+    }));
+
 const formatUnitLabel = (u: Unit) => {
   const base = `${u.nombre} ${u.placa}`.trim();
   if (!isUnidadConRemolque(u.nombre)) return base;
-  if (u.tipoRemolque) return `${base} · Tractor (${u.tipoRemolque})`;
   return `${base} · Tractor`;
 };
 
@@ -598,6 +627,7 @@ export default function TripsPage() {
   const [tipoRemolque, setTipoRemolque] = useState("");
   const [mostrarRemolque, setMostrarRemolque] = useState(false);
   const [placaRemolque, setPlacaRemolque] = useState("");
+  const [remolqueUnitNombre, setRemolqueUnitNombre] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -781,6 +811,7 @@ export default function TripsPage() {
         id: u._id || u.id,
         nombre: u.nombre,
         placa: u.placas ?? u.placa ?? "",
+        modelo: u.modelo || "",
         tipoRemolque: u.tipoRemolque || "",
         placaRemolque: u.placaRemolque || "",
         imagenUrl: u.imagenUrl || "",
@@ -806,12 +837,26 @@ export default function TripsPage() {
       setUnitPlaca(unitFromTrip?.placa ?? "");
       if (unitFromTrip && isUnidadConRemolque(unitFromTrip.nombre)) {
         setMostrarRemolque(true);
-        setTipoRemolque(unitFromTrip.tipoRemolque || "");
-        setPlacaRemolque(unitFromTrip.placaRemolque || "");
+        const savedTipo = unitFromTrip.tipoRemolque || "";
+        const savedPlaca = unitFromTrip.placaRemolque || "";
+        setTipoRemolque(savedTipo);
+        setPlacaRemolque(savedPlaca);
+        const byPlaca = savedPlaca
+          ? units.find(
+              (u) =>
+                isRemolqueUnitName(u.nombre) &&
+                String(u.placa || "").trim().toUpperCase() ===
+                  savedPlaca.trim().toUpperCase()
+            )
+          : null;
+        setRemolqueUnitNombre(
+          byPlaca?.nombre || buildRemolqueNombre(savedTipo, unitFromTrip.nombre)
+        );
       } else {
         setMostrarRemolque(false);
         setTipoRemolque("");
         setPlacaRemolque("");
+        setRemolqueUnitNombre("");
       }
     };
 
@@ -899,6 +944,7 @@ export default function TripsPage() {
       setMostrarRemolque(false);
       setTipoRemolque("");
       setPlacaRemolque("");
+      setRemolqueUnitNombre("");
       setMultidestino(false);
       setDestinosExtras([]);
     }
@@ -1280,12 +1326,14 @@ export default function TripsPage() {
     setUnitPlaca(unidad?.placa ?? "");
     if (unidad && isUnidadConRemolque(unidad.nombre)) {
       setMostrarRemolque(true);
-      setTipoRemolque(unidad.tipoRemolque || "");
-      setPlacaRemolque(unidad.placaRemolque || "");
+      setTipoRemolque("");
+      setPlacaRemolque("");
+      setRemolqueUnitNombre("");
     } else {
       setMostrarRemolque(false);
       setTipoRemolque("");
       setPlacaRemolque("");
+      setRemolqueUnitNombre("");
     }
   };
 
@@ -2304,6 +2352,27 @@ const renderDeleteConfirmModal = () => {
   const renderOperadorActions = (trip: Trip, compact = false) => {
     const liveTrip = trips.find((t) => t.id === trip.id) || trip;
     const estado = getTripEstadoKey(liveTrip.estado);
+
+    // Ayudante General: va como acompañante, vista de solo lectura (sin acciones).
+    if (isAyudante) {
+      const estadoLabel =
+        estado === "completado"
+          ? "Viaje completado"
+          : estado === "en progreso"
+          ? "Viaje en progreso"
+          : estado === "en parada"
+          ? "En parada"
+          : "Pendiente de iniciar";
+      return (
+        <View style={styles.ayudanteInfoBox}>
+          <FontAwesome5 name="user-friends" size={14} color="#2563eb" />
+          <Text style={styles.ayudanteInfoText}>
+            Vas como acompañante · {estadoLabel}
+          </Text>
+        </View>
+      );
+    }
+
     const canIniciar = estado === "pendiente" || estado === "en parada";
     // "Finalizar parada" solo aplica a viajes multidestino (hay más de un destino).
     const esMultidestino =
@@ -3432,7 +3501,9 @@ const renderDeleteConfirmModal = () => {
                       "Unidad",
                       unidadId,
                       handleUnidadChange,
-                      units.map((u) => ({ label: formatUnitLabel(u), value: u.id })),
+                      units
+                        .filter((u) => !isRemolqueUnitName(u.nombre))
+                        .map((u) => ({ label: formatUnitLabel(u), value: u.id })),
                       "Seleccionar unidad"
                     )}
                     {editingTrip && selectedUnit ? (
@@ -3449,34 +3520,41 @@ const renderDeleteConfirmModal = () => {
                     {mostrarRemolque && (
                       <View style={styles.remolqueBox}>
                         <Text style={styles.remolqueHint}>
-                          Tractor {selectedUnit?.nombre || ""} — selecciona el remolque (Lowboy o Caja Seca) y su placa
+                          Tractor {selectedUnit?.nombre || ""} — selecciona Caja Seca o Lowboy
                         </Text>
                         {renderFieldRow(
                           <>
                             {renderFieldHalf(
                               renderSelectField(
-                                "Tipo remolque",
-                                tipoRemolque,
+                                "Remolque / tractor",
+                                remolqueUnitNombre,
                                 (value) => {
-                                  setTipoRemolque(value);
-                                  if (!value) setPlacaRemolque("");
+                                  setRemolqueUnitNombre(value);
+                                  setTipoRemolque(tipoFromRemolqueNombre(value));
+                                  const trailer = units.find(
+                                    (u) =>
+                                      String(u.nombre || "").trim().toUpperCase() ===
+                                      String(value || "").trim().toUpperCase()
+                                  );
+                                  setPlacaRemolque(trailer?.placa || "");
                                 },
-                                REMOLQUE_OPTIONS,
-                                "Seleccionar Lowboy / Caja Seca"
+                                buildRemolqueUnitOptions(units),
+                                "Seleccionar remolque"
                               )
                             )}
-                            {(tipoRemolque === "Lowboy" || tipoRemolque === "Caja Seca") &&
-                              renderFieldHalf(
-                                renderModalField(
-                                  "Placa del remolque",
-                                  <TextInput
-                                    value={placaRemolque}
-                                    onChangeText={setPlacaRemolque}
-                                    placeholder="Placa remolque"
-                                    {...modalInputProps}
-                                  />
+                            {remolqueUnitNombre
+                              ? renderFieldHalf(
+                                  renderModalField(
+                                    "Placa del tractor",
+                                    <TextInput
+                                      value={placaRemolque}
+                                      editable={false}
+                                      placeholder="Se asigna automáticamente"
+                                      {...modalInputProps}
+                                    />
+                                  )
                                 )
-                              )}
+                              : null}
                           </>
                         )}
                       </View>
@@ -3685,7 +3763,9 @@ const renderDeleteConfirmModal = () => {
                             "Unidad",
                             extra.unidadId,
                             (v) => updateDestinoExtraAt(index, { unidadId: v }),
-                            units.map((u) => ({ label: formatUnitLabel(u), value: u.id })),
+                            units
+                              .filter((u) => !isRemolqueUnitName(u.nombre))
+                              .map((u) => ({ label: formatUnitLabel(u), value: u.id })),
                             "Seleccionar unidad"
                           )}
 
@@ -5592,6 +5672,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     color: "#059669",
+  },
+  ayudanteInfoBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#dbeafe",
+    backgroundColor: "#eff6ff",
+  },
+  ayudanteInfoText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#2563eb",
   },
   iconActionOperador: {
     width: "100%" as any,

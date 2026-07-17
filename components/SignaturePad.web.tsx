@@ -15,10 +15,13 @@ export interface SignaturePadHandle {
 
 interface Props {
   height?: number;
+  onBegin?: () => void;
+  onEnd?: () => void;
 }
 
 /** Pad de firma para web usando un <canvas> HTML nativo (sin dependencias). */
-const SignaturePad = forwardRef<SignaturePadHandle, Props>(({ height = 200 }, ref) => {
+const SignaturePad = forwardRef<SignaturePadHandle, Props>(
+  ({ height = 200, onBegin, onEnd }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawing = useRef(false);
   const hasStroke = useRef(false);
@@ -69,6 +72,7 @@ const SignaturePad = forwardRef<SignaturePadHandle, Props>(({ height = 200 }, re
     e.preventDefault();
     drawing.current = true;
     last.current = pos(e);
+    onBegin?.();
   };
 
   const move = (e: any) => {
@@ -86,6 +90,7 @@ const SignaturePad = forwardRef<SignaturePadHandle, Props>(({ height = 200 }, re
   };
 
   const end = () => {
+    if (drawing.current) onEnd?.();
     drawing.current = false;
     last.current = null;
   };
@@ -119,7 +124,8 @@ const SignaturePad = forwardRef<SignaturePadHandle, Props>(({ height = 200 }, re
       />
     </View>
   );
-});
+  }
+);
 
 SignaturePad.displayName = "SignaturePad";
 

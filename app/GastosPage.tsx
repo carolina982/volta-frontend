@@ -75,6 +75,34 @@ const resolveConductorNombre = (trip: any, users: SimpleUser[]) => {
   return formatUserName(user);
 };
 
+/** Devuelve el/los nombre(s) del/los acompañante(s) del viaje (conductor principal + destinos extra). */
+const resolveAcompananteNombre = (trip: any, users: SimpleUser[]): string => {
+  if (!trip) return "";
+  const names: string[] = [];
+  const pushName = (val: any) => {
+    if (!val) return;
+    if (typeof val === "object" && (val.nombre || val.apellido)) {
+      const n = formatUserName({
+        id: toId(val),
+        nombre: val.nombre || "",
+        apellido: val.apellido,
+      });
+      if (n) names.push(n);
+      return;
+    }
+    const id = toId(val);
+    if (!id) return;
+    const u = users.find((x) => String(x.id) === id);
+    const n = formatUserName(u);
+    if (n) names.push(n);
+  };
+  pushName(trip.acompanante);
+  if (Array.isArray(trip.destinoExtra)) {
+    trip.destinoExtra.forEach((leg: any) => pushName(leg?.acompanante));
+  }
+  return [...new Set(names.filter(Boolean))].join(", ");
+};
+
 const formatTripOptionLabel = (t: Trip) => {
   const ruta = (t.rutaAcubrir || t.destino || "Sin viaje").trim();
   const operador = (t.conductorNombre || "").trim();
@@ -95,6 +123,7 @@ const excelHeaders = [
   "Fecha",
   "Viaje",
   "Conductor",
+  "Acompañante",
   "Comidas (días)",
   "Comidas ($)",
   "DEF (cantidad)",
@@ -552,6 +581,7 @@ export default function ViaticsPage() {
           resolveConductorNombre(trip || v.tripId, users) ||
           v.conductorNombre ||
           "",
+        acompananteNombre: resolveAcompananteNombre(trip || v.tripId, users),
       };
     });
 
@@ -683,6 +713,8 @@ const exportViaticosToExcel =async ()=>{
         resolveConductorNombre(trip || v.tripId, users) ||
         v.conductorNombre ||
         "—";
+      const acompananteNombre =
+        resolveAcompananteNombre(trip || v.tripId, users) || "Sin acompañante";
       const dieselTotal= Array.isArray((v as any).dieselHistorial)
         ?(v as any).dieselHistorial.reduce((acc:number,d:any)=>acc+Number (d.costo || 0),0)
         :Number(v.dieselCosto || (v as any).diselCosto || 0);
@@ -742,6 +774,7 @@ const exportViaticosToExcel =async ()=>{
         date.toLocaleDateString("es-MX"),
         viajeNombre,
         conductorNombre,
+        acompananteNombre,
         comidasCantidad,
         comidasCosto,
         defCantidad,
@@ -1163,6 +1196,7 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
       item.conductorNombre && item.conductorNombre !== "Sin asignar"
         ? item.conductorNombre
         : "—";
+    const acompananteNombre = String((item as any).acompananteNombre || "").trim();
     const comidas = getComidasInfo(item);
     const dieselTotal = getDieselTotal(item);
     const casetasTag = getCasetasTagTotal(item);
@@ -1193,6 +1227,13 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
           <View style={styles.sheetHeroDivider} />
           <Text style={styles.sheetHeroEyebrow}>Operador</Text>
           <Text style={styles.sheetHeroDestino}>{conductorNombre}</Text>
+          <View style={styles.sheetHeroDivider} />
+          <Text style={styles.sheetHeroEyebrow}>Acompañante</Text>
+          <Text
+            style={[styles.sheetHeroDestino, !acompananteNombre && { color: "#9ca3af" }]}
+          >
+            {acompananteNombre || "Sin acompañante"}
+          </Text>
         </View>
 
         <View style={styles.sheetSection}>
@@ -1271,6 +1312,7 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
       item.conductorNombre && item.conductorNombre !== "Sin asignar"
         ? item.conductorNombre
         : "—";
+    const acompananteNombre = String((item as any).acompananteNombre || "").trim();
     const dieselTotal = getDieselTotal(item);
     const casetasTag = getCasetasTagTotal(item);
 
@@ -1293,6 +1335,26 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
                 <Text style={styles.mobileMetaValue} numberOfLines={1}>
                   {conductorNombre}
                 </Text>
+              </View>
+
+              <View style={styles.mobileMetaBlock}>
+                <Text style={styles.specLabel}>Acompañante</Text>
+                <View style={styles.acompRow}>
+                  <FontAwesome5
+                    name={acompananteNombre ? "user-friends" : "user"}
+                    size={12}
+                    color={acompananteNombre ? "#2563eb" : "#9ca3af"}
+                  />
+                  <Text
+                    style={[
+                      styles.mobileMetaValue,
+                      { color: acompananteNombre ? "#111111" : "#9ca3af" },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {acompananteNombre || "Sin acompañante"}
+                  </Text>
+                </View>
               </View>
 
               <View style={styles.mobileChipsRow}>
@@ -1349,6 +1411,15 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
               <View style={styles.specItem}>
                 <Text style={styles.specLabel}>Conductor</Text>
                 <Text style={styles.specValue} numberOfLines={1}>{conductorNombre}</Text>
+              </View>
+              <View style={styles.specItem}>
+                <Text style={styles.specLabel}>Acompañante</Text>
+                <Text
+                  style={[styles.specValue, !acompananteNombre && { color: "#9ca3af" }]}
+                  numberOfLines={1}
+                >
+                  {acompananteNombre || "Sin acompañante"}
+                </Text>
               </View>
               <View style={styles.specItem}>
                 <Text style={styles.specLabel}>Diesel</Text>
@@ -3283,6 +3354,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: "#111111",
+    marginTop: 2,
+  },
+  acompRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     marginTop: 2,
   },
   mobileChipsRow: {
