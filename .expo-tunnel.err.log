@@ -1,0 +1,39 @@
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm.
+The following packages should be updated for best compatibility with the installed expo version:
+  @react-native-community/datetimepicker@9.1.0 - expected version: 8.4.4
+  @react-native-picker/picker@2.11.4 - expected version: 2.11.1
+  expo@54.0.33 - expected version: ~54.0.36
+  expo-document-picker@55.0.13 - expected version: ~14.0.8
+  expo-font@14.0.11 - expected version: ~14.0.12
+  expo-image-picker@17.0.10 - expected version: ~17.0.11
+  expo-router@6.0.23 - expected version: ~6.0.24
+  expo-sharing@55.0.18 - expected version: ~14.0.8
+  expo-web-browser@15.0.10 - expected version: ~15.0.11
+Your project may not work correctly until you install the expected versions of the packages.
+[expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.
+λ  WARN  props.pointerEvents is deprecated. Use style.pointerEvents 
+  console.warn (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\expo\node_modules\@expo\cli\src\start\server\serverLogLikeMetro.ts:161:21)
+  warnOnce (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-native-web\dist\modules\warnOnce\index.js:24:13)
+  createDOMProps (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-native-web\dist\modules\createDOMProps\index.js:805:13)
+  createElement (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-native-web\dist\exports\createElement\index.js:23:32)
+  Component (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-native-web\dist\exports\View\index.js:111:23)
+  Object.callComponentInDEV [as react-stack-bottom-frame] (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-dom\cjs\react-dom-server-legacy.node.development.js:8970:18)
+  renderWithHooks (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-dom\cjs\react-dom-server-legacy.node.development.js:4699:19)
+  run (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-dom\cjs\react-dom-server-legacy.node.development.js:5539:39)
+  retryNode (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-dom\cjs\react-dom-server-legacy.node.development.js:5899:31)
+  renderNodeDestructive (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-dom\cjs\react-dom-server-legacy.node.development.js:5849:11)
+[expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.
+λ  WARN  props.pointerEvents is deprecated. Use style.pointerEvents 
+  console.warn (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\expo\node_modules\@expo\cli\src\start\server\serverLogLikeMetro.ts:161:21)
+  warnOnce (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-native-web\dist\modules\warnOnce\index.js:24:13)
+  createDOMProps (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-native-web\dist\modules\createDOMProps\index.js:805:13)
+  createElement (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-native-web\dist\exports\createElement\index.js:23:32)
+  Component (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-native-web\dist\exports\View\index.js:111:23)
+  Object.callComponentInDEV [as react-stack-bottom-frame] (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-dom\cjs\react-dom-server-legacy.node.development.js:8970:18)
+  renderWithHooks (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-dom\cjs\react-dom-server-legacy.node.development.js:4699:19)
+  run (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-dom\cjs\react-dom-server-legacy.node.development.js:5539:39)
+  retryNode (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-dom\cjs\react-dom-server-legacy.node.development.js:5899:31)
+  renderNodeDestructive (E:\sregr\Documents\APP\Volta-app\volta-frontend\node_modules\react-dom\cjs\react-dom-server-legacy.node.development.js:5849:11)
+Error: Premature close
+    at onclose (node:internal/streams/end-of-stream:159:30)
+    at processTicksAndRejections (node:internal/process/task_queues:77:11)

@@ -4,9 +4,10 @@ import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { TextInput } from "react-native-paper";
 import { useStore } from "../context/Store";
+import { api, BASE_URL } from "../services/api";
 
 export default function Login() {
-  const { login } = useStore();
+  const { login, isHydrated } = useStore();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -90,6 +91,12 @@ export default function Login() {
 
     if (hasError) return;
 
+    // En móvil AsyncStorage tarda; si no esperamos, la hidratación puede borrar la sesión.
+    if (!isHydrated) {
+      setGeneralError("Preparando la app… espera un segundo e intenta de nuevo.");
+      return;
+    }
+
     setLoading(true);
     try {
       if (rememberMe) {
@@ -111,21 +118,16 @@ export default function Login() {
       }
 
       const identifier = email.trim();
-      const payload: any = { email: identifier, identifier, password };
+      // En móvil el teclado a veces deja espacios al final de la contraseña.
+      const cleanPassword = password.trimEnd();
+      const payload: any = { email: identifier, identifier, password: cleanPassword };
       if (isTwoFactorRequired) {
         payload.twoFactorCode = twoFactorCode;
       }
 
-      const response = await fetch(
-        "https://volta-backend-px1a.onrender.com/api/auth/login",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }
-      );
-      
-      const data = await response.json();
+      // Misma API que el resto de la app; timeout alto por cold start de Render en móvil.
+      const response = await api.post("/auth/login", payload, { timeout: 60000 });
+      const data = response.data || {};
 
       if (response.status === 403 && data.requiresVerification) {
         setGeneralError("Tu cuenta de correo electrónico no ha sido verificada. Por favor revisa tu bandeja de entrada.");
@@ -138,13 +140,14 @@ export default function Login() {
         return;
       }
 
-      if (!response.ok) {
-        setGeneralError(data.message || "Ocurrió un problema al iniciar sesión.");
+      if (!data.token) {
+        setGeneralError("No se recibió el token de autenticación del servidor.");
         return;
       }
 
-      if (!data.token) {
-        setGeneralError("No se recibió el token de autenticación del servidor.");
+      const userPayload = data.user || data;
+      if (!userPayload || (!userPayload._id && !userPayload.id)) {
+        setGeneralError("Respuesta de login incompleta. Intenta de nuevo.");
         return;
       }
 
@@ -156,27 +159,61 @@ export default function Login() {
         }
       }
 
-      const userId = data.user.id || data.user._id;
+      const userId = userPayload.id || userPayload._id;
 
       login(
         {
-          _id: String(data.user._id || userId),
-          id: String(userId || data.user._id),
-          nombre: data.user.nombre,
-          apellido: data.user.apellido,
-          apellidoPaterno: data.user.apellidoPaterno || "",
-          apellidoMaterno: data.user.apellidoMaterno || "",
-          email: data.user.email,
-          rol: data.user.rol,
-          photoUrl: data.user.photoUrl,
-          contacto: data.user.contacto,
+          _id: String(userPayload._id || userId),
+          id: String(userId || userPayload._id),
+          nombre: userPayload.nombre,
+          apellido: userPayload.apellido,
+          apellidoPaterno: userPayload.apellidoPaterno || "",
+          apellidoMaterno: userPayload.apellidoMaterno || "",
+          email: userPayload.email,
+          rol: userPayload.rol,
+          photoUrl: userPayload.photoUrl,
+          contacto: userPayload.contacto,
         },
         data.token
       );
 
       router.replace("/Dashboard");
-    } catch (error) {
-      setGeneralError("No se pudo conectar con el servidor. Inténtalo más tarde.");
+    } catch (error: any) {
+      console.error("Login error:", error?.message || error, {
+        baseURL: BASE_URL,
+        platform: Platform.OS,
+        code: error?.code,
+        status: error?.response?.status,
+      });
+
+      const status = error?.response?.status;
+      const serverMsg = error?.response?.data?.message;
+
+      if (status === 403 && error?.response?.data?.requiresVerification) {
+        setGeneralError("Tu cuenta de correo electrónico no ha sido verificada. Por favor revisa tu bandeja de entrada.");
+        return;
+      }
+
+      if (status === 401 || status === 400) {
+        setGeneralError(serverMsg || "Usuario o contraseña incorrectos.");
+        return;
+      }
+
+      if (error?.code === "ECONNABORTED" || String(error?.message || "").includes("timeout")) {
+        setGeneralError(
+          "El servidor tardó demasiado en responder (puede estar despertando). Espera 20 segundos e intenta otra vez."
+        );
+        return;
+      }
+
+      if (!error?.response) {
+        setGeneralError(
+          `No se pudo conectar con el servidor desde el celular.\n(${BASE_URL})\nRevisa tu internet e intenta de nuevo.`
+        );
+        return;
+      }
+
+      setGeneralError(serverMsg || "Ocurrió un problema al iniciar sesión.");
     } finally {
       setLoading(false);
     }
@@ -209,6 +246,9 @@ export default function Login() {
                 onChangeText={(text) => { setEmail(text); setEmailError(""); }}
                 autoCapitalize="none"
                 autoCorrect={false}
+                autoComplete="username"
+                textContentType="username"
+                keyboardType="email-address"
                 mode="flat"
                 underlineColor={emailError ? "#dc2626" : "#d1d5db"}
                 activeUnderlineColor={emailError ? "#dc2626" : "#111111"}
@@ -224,6 +264,10 @@ export default function Login() {
                 value={password}
                 onChangeText={(text) => { setPassword(text); setPasswordError(""); }}
                 secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="password"
+                textContentType="password"
                 mode="flat"
                 underlineColor={passwordError ? "#dc2626" : "#d1d5db"}
                 activeUnderlineColor={passwordError ? "#dc2626" : "#111111"}

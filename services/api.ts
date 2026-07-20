@@ -34,18 +34,27 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response)=>response,
   async (error)=>{
-    if (error.response && error .response.status === 401){
-      console.log ("Token expirado o invalido . Cerrando sesion ..");
-       if (Platform.OS === "web"){
+    const status = error.response?.status;
+    const url = String(error.config?.url || "");
+    // 401 en login/register es credencial incorrecta, no sesión caducada.
+    const isAuthAttempt =
+      url.includes("/auth/login") ||
+      url.includes("/auth/register") ||
+      url.includes("/auth/forgot-password") ||
+      url.includes("/auth/reset-password");
+
+    if (status === 401 && !isAuthAttempt) {
+      console.log("Token expirado o invalido. Cerrando sesion..");
+      if (Platform.OS === "web") {
         localStorage.removeItem("token");
-        window.location.href="/";
-       }else{
+        window.location.href = "/";
+      } else {
         await AsyncStorage.removeItem("token");
         Alert.alert(
           "Sesion expirada",
-          "Tu sesion ha caducado .Por Favor  inicia sesion nuevamente"
+          "Tu sesion ha caducado. Por favor inicia sesion nuevamente"
         );
-       }
+      }
     }
     return Promise.reject(error);
   }

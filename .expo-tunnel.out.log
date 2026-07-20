@@ -1,0 +1,29 @@
+Starting project at E:\sregr\Documents\APP\Volta-app\volta-frontend
+Metro is running in CI mode, reloads are disabled. Remove CI=true to enable watch mode.
+Starting Metro Bundler
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+Waiting on http://to2jkv9bm5y8fcv.boltexpo.dev
+Logs for your project will appear below.
+Web node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Web node_modules\expo-router\entry.js ▓▓▓▓░░░░░░░░░░░░ 29.5% (19/35)
+λ node_modules\expo-router\node\render.js ▓▓▓▓▓░░░░░░░░░░░ 32.2% (235/414)
+Web node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+λ node_modules\expo-router\node\render.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Web node_modules\expo-router\entry.js ▓▓▓▓▓░░░░░░░░░░░ 36.5% (238/411)
+λ node_modules\expo-router\node\render.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 59.5% (681/907)
+Web node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+λ node_modules\expo-router\node\render.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Web node_modules\expo-router\entry.js ▓▓▓▓▓▓▓░░░░░░░░░ 49.9% (560/803)
+λ node_modules\expo-router\node\render.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 93.6% (1069/1105)
+Web node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+λ node_modules\expo-router\node\render.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+λ Bundled 13686ms node_modules\expo-router\node\render.js (1253 modules)
+λ Bundled 13060ms node_modules\expo-router\node\render.js (1 module)
+Web node_modules\expo-router\entry.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 97.3% (1155/1171)
+Web node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Web Bundled 16739ms node_modules\expo-router\entry.js (1250 modules)
+Web Bundled 16042ms node_modules\expo-router\entry.js (1 module)
+Web node_modules\expo-router\entry.js ▓▓░░░░░░░░░░░░░░ 16.2% (158/393)
+Web node_modules\expo-router\entry.js ▓▓▓▓▓▓▓▓▓▓▓▓▓░░░ 87.4% (1052/1125)
+Web Bundled 5027ms node_modules\expo-router\entry.js (1240 modules)
+ LOG  [web] Logs will appear in the browser console

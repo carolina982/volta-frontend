@@ -105,14 +105,15 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
           setTrips(parsed.trips || []);
           setUnits(parsed.units || []);
           setViatics(parsed.viatics || []);
-          setCurrentUser(parsed.currentUser || null);
+          // No pisar un login que ocurrió mientras AsyncStorage aún cargaba (común en móvil).
+          setCurrentUser((prev) => prev || parsed.currentUser || null);
           if (parsed.token) {
-            setToken(parsed.token);
+            setToken((prev) => prev || parsed.token);
           }
         }
 
         if (savedToken) {
-          setToken(savedToken);
+          setToken((prev) => prev || savedToken);
         }
       } catch (error) {
         console.warn("Error restaurando sesión:", error);

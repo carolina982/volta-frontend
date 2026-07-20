@@ -101,6 +101,7 @@ interface Trip {
   estado: string;
   acompanante: string;
   def: string;
+  tarjeta?: string;
   multidestino?: boolean;
   destinoExtra?: DestinoExtraTrip[] | DestinoExtraTrip | null;
   destinoActualIndex?: number;
@@ -132,6 +133,23 @@ interface Unit {
 interface User { id: string; nombre: string; apellido?: string; rol?: string }
 
 const UNIDADES_CON_REMOLQUE = ["002", "007"];
+
+const DEFAULT_TARJETAS = [
+  "Konfio Fractal Julia",
+  "Konfio Fractal Cristian",
+  "Konfio Fractal Fernando",
+  "Konfio HM Arturo",
+  "Konfio HM Omar",
+  "Konfio HM Fernando",
+  "Banamex",
+  "Scotiabank",
+  "Santander",
+  "Rappi Fernando",
+  "Rappi Diego",
+  "Clara Diego",
+] as const;
+
+const TARJETAS_STORAGE_KEY = "volta_tarjetas_catalog";
 
 const isUnidadConRemolque = (nombre?: string) =>
   Boolean(nombre && UNIDADES_CON_REMOLQUE.includes(String(nombre).trim()));
@@ -607,6 +625,10 @@ export default function TripsPage() {
   const [estado, setEstado] = useState("pendiente");
   const [kmSalidaManual, setKmSalidaManual] = useState("");
   const [kmLlegadaManual, setKmLlegadaManual] = useState("");
+  const [tarjeta, setTarjeta] = useState("");
+  const [tarjetasCatalog, setTarjetasCatalog] = useState<string[]>([...DEFAULT_TARJETAS]);
+  const [addingTarjeta, setAddingTarjeta] = useState(false);
+  const [nuevaTarjeta, setNuevaTarjeta] = useState("");
   const [acompanante, setAcompanante] = useState("");
   const [def, setDef] = useState("");
   const [exportType, setExportType] = useState("semana");
@@ -880,6 +902,9 @@ export default function TripsPage() {
       setDef(trip.def || "");
       setKmSalidaManual("");
       setKmLlegadaManual("");
+      setTarjeta("");
+      setAddingTarjeta(false);
+      setNuevaTarjeta("");
       setFechaSalida("");
       setHoraSalida("");
       setFechaLlegada("");
@@ -920,6 +945,14 @@ export default function TripsPage() {
       setKmLlegadaManual(
         trip.kilometrajeLlegada?.[0]?.numero != null ? String(trip.kilometrajeLlegada[0].numero) : ""
       );
+      setTarjeta(trip.tarjeta || "");
+      setAddingTarjeta(false);
+      setNuevaTarjeta("");
+      if (trip.tarjeta?.trim()) {
+        setTarjetasCatalog((prev) =>
+          prev.includes(trip.tarjeta!.trim()) ? prev : [...prev, trip.tarjeta!.trim()]
+        );
+      }
 
       const extrasList = normalizeDestinosExtrasList(trip.destinoExtra);
       const hasMulti = Boolean(trip.multidestino && extrasList.length > 0);
@@ -944,6 +977,9 @@ export default function TripsPage() {
       setDef("");
       setKmSalidaManual("");
       setKmLlegadaManual("");
+      setTarjeta("");
+      setAddingTarjeta(false);
+      setNuevaTarjeta("");
       setSelectedUnit(null);
       setUnitPlaca("");
       setMostrarRemolque(false);
@@ -1179,6 +1215,12 @@ export default function TripsPage() {
                 </View>
               </View>
             </View>
+            <View style={[styles.sheetMetaItem, styles.sheetMetaItemFull]}>
+              <Text style={styles.sheetMetaLabel}>Tarjeta</Text>
+              <Text style={styles.sheetMetaValue}>
+                {liveTrip.tarjeta?.trim() ? liveTrip.tarjeta.trim() : "Sin tarjeta"}
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -1349,6 +1391,62 @@ export default function TripsPage() {
       loadUsers();
     }
   }, [currentUser, loadTrips, loadUnits, loadUsers]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;
+        const raw = await AsyncStorage.getItem(TARJETAS_STORAGE_KEY);
+        if (cancelled) return;
+        const extras = raw ? (JSON.parse(raw) as string[]) : [];
+        const merged = [
+          ...DEFAULT_TARJETAS,
+          ...extras.filter(
+            (name) =>
+              typeof name === "string" &&
+              name.trim() &&
+              !DEFAULT_TARJETAS.includes(name.trim() as any)
+          ),
+        ];
+        setTarjetasCatalog(merged);
+      } catch {
+        if (!cancelled) setTarjetasCatalog([...DEFAULT_TARJETAS]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistTarjetasCatalog = useCallback(async (list: string[]) => {
+    setTarjetasCatalog(list);
+    try {
+      const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;
+      const custom = list.filter(
+        (name) => !DEFAULT_TARJETAS.includes(name as (typeof DEFAULT_TARJETAS)[number])
+      );
+      await AsyncStorage.setItem(TARJETAS_STORAGE_KEY, JSON.stringify(custom));
+    } catch (error) {
+      console.error("No se pudo guardar catálogo de tarjetas", error);
+    }
+  }, []);
+
+  const addNuevaTarjeta = useCallback(() => {
+    const name = nuevaTarjeta.trim();
+    if (!name) {
+      notify("Falta información", "Escribe el nombre de la tarjeta.");
+      return;
+    }
+    const exists = tarjetasCatalog.some(
+      (t) => t.toLowerCase() === name.toLowerCase()
+    );
+    const next = exists ? tarjetasCatalog : [...tarjetasCatalog, name];
+    void persistTarjetasCatalog(next);
+    setTarjeta(name);
+    setNuevaTarjeta("");
+    setAddingTarjeta(false);
+  }, [nuevaTarjeta, tarjetasCatalog, persistTarjetasCatalog]);
 
   // Rastrea la altura del teclado para que no tape el campo de extras en móvil.
   useEffect(() => {
@@ -1696,6 +1794,7 @@ const saveTrip = async () => {
     estado: estadoCalculado,
     acompanante: acompanante === "none" || acompanante === "" ? null : acompanante,
     def: def || "",
+    tarjeta: tarjeta.trim(),
     kilometrajeSalida: kmSalidaManual.trim()
       ? [{ numero: Number(kmSalidaManual), descripcion: "" }]
       : [],
@@ -1919,6 +2018,7 @@ const renderDeleteConfirmModal = () => {
           "KM Salida": formatKmLabel(t.kilometrajeSalida),
           "KM Llegada": formatKmLabel(t.kilometrajeLlegada),
           "DEF entregado": t.def?.trim() ? t.def.trim() : "",
+          Tarjeta: t.tarjeta?.trim() ? t.tarjeta.trim() : "",
           "Checklist inicio": formatChecklistForExcel(t.checklistInicio),
           "Checklist recepción": formatChecklistForExcel(t.checklistRecepcion),
           "Checklist entrega": formatChecklistForExcel(t.checklistFin),
@@ -3071,55 +3171,58 @@ const renderDeleteConfirmModal = () => {
     if (!activePicker || Platform.OS === "web") return null;
     const close = () => setActivePicker(null);
 
-    // Android: el diálogo nativo se muestra y cierra solo.
-    if (Platform.OS === "android") {
-      return (
-        <DateTimePicker
-          value={pickerTemp}
-          mode={activePicker.mode}
-          display="default"
-          is24Hour
-          onChange={(event: any, d?: Date) => {
-            close();
-            if (event?.type === "dismissed") return;
-            if (d) activePicker.apply(d);
-          }}
-        />
-      );
-    }
-
-    // iOS: overlay propio (un Modal anidado quedaría oculto detrás del modal del viaje).
+    // Android e iOS: overlay propio con ruedas (spinner), no el reloj circular de Android.
     return (
-      <View style={styles.pickerOverlay}>
-        <Pressable style={styles.pickerBackdrop} onPress={close} />
-        <View style={styles.pickerCard}>
-          <View style={styles.pickerHeader}>
-            <Text style={styles.pickerTitle} numberOfLines={1}>
-              {activePicker.title}
-            </Text>
-            <Pressable
-              style={styles.iosPickerDone}
-              onPress={() => {
-                activePicker.apply(pickerTemp);
-                close();
-              }}
-            >
-              <Text style={styles.iosPickerDoneText}>Listo</Text>
-            </Pressable>
+      <View style={styles.pickerOverlay} pointerEvents="box-none">
+        <Pressable
+          style={styles.pickerBackdrop}
+          onPress={close}
+          accessibilityRole="button"
+          accessibilityLabel="Cerrar selector"
+        />
+        <SafeAreaView edges={["bottom"]} style={styles.pickerSafeArea}>
+          <View
+            style={[styles.pickerCard, Platform.OS === "android" && styles.pickerCardAndroid]}
+            // Evita que el toque en el card cierre el overlay
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle} numberOfLines={1}>
+                {activePicker.title}
+              </Text>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.iosPickerDone,
+                  pressed && styles.iosPickerDonePressed,
+                ]}
+                onPress={() => {
+                  activePicker.apply(pickerTemp);
+                  close();
+                }}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Confirmar fecha u hora"
+              >
+                <Text style={styles.iosPickerDoneText}>Listo</Text>
+              </Pressable>
+            </View>
+            <View style={styles.pickerWheelWrap}>
+              <DateTimePicker
+                value={pickerTemp}
+                mode={activePicker.mode}
+                display="spinner"
+                is24Hour
+                themeVariant="light"
+                textColor="#111111"
+                locale="es-MX"
+                style={[styles.iosPicker, Platform.OS === "android" && styles.androidPicker]}
+                onChange={(_event: any, d?: Date) => {
+                  if (d) setPickerTemp(d);
+                }}
+              />
+            </View>
           </View>
-          <DateTimePicker
-            value={pickerTemp}
-            mode={activePicker.mode}
-            display="spinner"
-            is24Hour
-            themeVariant="light"
-            textColor="#111111"
-            style={styles.iosPicker}
-            onChange={(_event: any, d?: Date) => {
-              if (d) setPickerTemp(d);
-            }}
-          />
-        </View>
+        </SafeAreaView>
       </View>
     );
   };
@@ -3136,7 +3239,6 @@ const renderDeleteConfirmModal = () => {
     const openNativePicker = (el: HTMLInputElement | null) => {
       if (!el) return;
       try {
-        // Chrome / Safari moderno
         (el as any).showPicker?.();
       } catch {
         el.focus();
@@ -3144,35 +3246,41 @@ const renderDeleteConfirmModal = () => {
       }
     };
 
-    // Web: siempre UI custom (botón a 100%). El input nativo va transparente
-    // encima; así la hora no se corta como con <input type="time"> visible.
+    const datePlaceholder = "DD/MM/AAAA";
+    const timePlaceholder = "HH:MM";
+
+    // Web: UI custom + input nativo transparente encima.
     if (Platform.OS === "web") {
       return renderModalField(
         label,
         <View
-          style={styles.dateTimeStackWeb}
+          style={[styles.dateTimeRowPro, touchLike && styles.dateTimeRowProStack]}
           {...{
             onClick: (e: any) => e.stopPropagation(),
             onMouseDown: (e: any) => e.stopPropagation(),
           }}
         >
-          <View style={styles.webDateTimeFieldStacked}>
-            <Text style={styles.webDateTimeHint}>Fecha</Text>
+          <View style={[styles.dateTimeColPro, touchLike && styles.dateTimeColProFull]}>
+            <Text style={styles.dateTimeLabelPro}>Fecha</Text>
             <View
               style={[
                 styles.dateTimeHitBox,
+                styles.dateTimeHitBoxPro,
                 touchLike && styles.dateTimeHitBoxTouch,
               ]}
             >
-              <FontAwesome5 name="calendar-alt" size={15} color="#6b7280" />
+              <View style={styles.dateTimeIconBadge}>
+                <FontAwesome5 name="calendar-alt" size={13} color="#374151" />
+              </View>
               <Text
                 style={[
                   styles.dateTimeHitText,
+                  styles.dateTimeHitTextPro,
                   !dateValue && styles.selectTriggerPlaceholder,
                 ]}
                 numberOfLines={1}
               >
-                {dateValue || "Seleccionar fecha"}
+                {dateValue || datePlaceholder}
               </Text>
               <input
                 type="date"
@@ -3198,23 +3306,27 @@ const renderDeleteConfirmModal = () => {
             </View>
           </View>
 
-          <View style={styles.webDateTimeFieldStacked}>
-            <Text style={styles.webDateTimeHint}>Hora</Text>
+          <View style={[styles.dateTimeColPro, touchLike && styles.dateTimeColProFull]}>
+            <Text style={styles.dateTimeLabelPro}>Hora</Text>
             <View
               style={[
                 styles.dateTimeHitBox,
+                styles.dateTimeHitBoxPro,
                 touchLike && styles.dateTimeHitBoxTouch,
               ]}
             >
-              <FontAwesome5 name="clock" size={15} color="#6b7280" />
+              <View style={styles.dateTimeIconBadge}>
+                <FontAwesome5 name="clock" size={13} color="#374151" />
+              </View>
               <Text
                 style={[
                   styles.dateTimeHitText,
+                  styles.dateTimeHitTextPro,
                   !timeValue && styles.selectTriggerPlaceholder,
                 ]}
                 numberOfLines={1}
               >
-                {timeValue || "Seleccionar hora"}
+                {timeValue || timePlaceholder}
               </Text>
               <input
                 type="time"
@@ -3239,50 +3351,92 @@ const renderDeleteConfirmModal = () => {
       );
     }
 
+    // iOS / Android: fila profesional Fecha | Hora + overlay spinner.
     return renderModalField(
       label,
-      <View style={styles.dateTimeStackWeb}>
-        <Pressable
-          style={[styles.dateTimeHitBox, touchLike && styles.dateTimeHitBoxTouch]}
-          onPress={() =>
-            openPicker({
-              mode: "date",
-              initial: parseDate(dateValue) || new Date(),
-              apply: (d) => onDateChange(formatDateDisplay(d)),
-              title: `${label} · fecha`,
-            })
-          }
-        >
-          <FontAwesome5 name="calendar-alt" size={15} color="#6b7280" />
-          <Text
-            style={[styles.dateTimeHitText, !dateValue && styles.selectTriggerPlaceholder]}
-            numberOfLines={1}
+      <View style={styles.dateTimeRowPro} collapsable={false}>
+        <View style={styles.dateTimeColPro} collapsable={false}>
+          <Text style={styles.dateTimeLabelPro}>Fecha</Text>
+          <TouchableOpacity
+            style={[
+              styles.dateTimeHitBox,
+              styles.dateTimeHitBoxPro,
+              styles.dateTimeHitBoxNative,
+              touchLike && styles.dateTimeHitBoxTouch,
+            ]}
+            onPress={() =>
+              openPicker({
+                mode: "date",
+                initial: parseDate(dateValue) || new Date(),
+                apply: (d) => onDateChange(formatDateDisplay(d)),
+                title: `${label} · fecha`,
+              })
+            }
+            activeOpacity={0.75}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            accessibilityRole="button"
+            accessibilityLabel={`${label}, seleccionar fecha`}
+            delayPressIn={0}
           >
-            {dateValue || "Seleccionar fecha"}
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.dateTimeHitBox, touchLike && styles.dateTimeHitBoxTouch]}
-          onPress={() =>
-            openPicker({
-              mode: "time",
-              initial: timeValue
-                ? combineDateTime(dateValue || formatDateDisplay(new Date()), timeValue) ||
-                  new Date()
-                : new Date(),
-              apply: (d) => onTimeChange(formatTimeDisplay(d)),
-              title: `${label} · hora`,
-            })
-          }
-        >
-          <FontAwesome5 name="clock" size={15} color="#6b7280" />
-          <Text
-            style={[styles.dateTimeHitText, !timeValue && styles.selectTriggerPlaceholder]}
-            numberOfLines={1}
+            <View style={styles.dateTimeIconBadge}>
+              <FontAwesome5 name="calendar-alt" size={13} color="#374151" />
+            </View>
+            <Text
+              style={[
+                styles.dateTimeHitText,
+                styles.dateTimeHitTextPro,
+                touchLike && styles.dateTimeHitTextTouch,
+                !dateValue && styles.selectTriggerPlaceholder,
+              ]}
+              numberOfLines={1}
+            >
+              {dateValue || datePlaceholder}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.dateTimeColPro} collapsable={false}>
+          <Text style={styles.dateTimeLabelPro}>Hora</Text>
+          <TouchableOpacity
+            style={[
+              styles.dateTimeHitBox,
+              styles.dateTimeHitBoxPro,
+              styles.dateTimeHitBoxNative,
+              touchLike && styles.dateTimeHitBoxTouch,
+            ]}
+            onPress={() =>
+              openPicker({
+                mode: "time",
+                initial: timeValue
+                  ? combineDateTime(dateValue || formatDateDisplay(new Date()), timeValue) ||
+                    new Date()
+                  : new Date(),
+                apply: (d) => onTimeChange(formatTimeDisplay(d)),
+                title: `${label} · hora`,
+              })
+            }
+            activeOpacity={0.75}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            accessibilityRole="button"
+            accessibilityLabel={`${label}, seleccionar hora`}
+            delayPressIn={0}
           >
-            {timeValue || "Seleccionar hora"}
-          </Text>
-        </Pressable>
+            <View style={styles.dateTimeIconBadge}>
+              <FontAwesome5 name="clock" size={13} color="#374151" />
+            </View>
+            <Text
+              style={[
+                styles.dateTimeHitText,
+                styles.dateTimeHitTextPro,
+                touchLike && styles.dateTimeHitTextTouch,
+                !timeValue && styles.selectTriggerPlaceholder,
+              ]}
+              numberOfLines={1}
+            >
+              {timeValue || timePlaceholder}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -3635,43 +3789,63 @@ const renderDeleteConfirmModal = () => {
                 )}
 
                 {renderFormSection(
-                  "Kilometraje",
-                  renderFieldRow(
-                    <>
-                      {renderFieldHalf(
-                        renderModalField(
-                          "KM Salida",
-                          <TextInput
-                            value={kmSalidaManual}
-                            onChangeText={setKmSalidaManual}
-                            placeholder="0"
-                            keyboardType="numeric"
-                            left={<TextInput.Icon icon="speedometer" />}
-                            {...modalInputProps}
-                          />
-                        )
-                      )}
-                      {renderFieldHalf(
-                        renderModalField(
-                          "KM Llegada",
-                          <TextInput
-                            value={kmLlegadaManual}
-                            onChangeText={setKmLlegadaManual}
-                            placeholder="0"
-                            keyboardType="numeric"
-                            left={<TextInput.Icon icon="speedometer" />}
-                            {...modalInputProps}
-                          />
-                        )
-                      )}
-                    </>
-                  )
+                  "Tarjeta",
+                  <View style={styles.tarjetaSection}>
+                    {renderSelectField(
+                      "Seleccionar tarjeta",
+                      tarjeta,
+                      setTarjeta,
+                      tarjetasCatalog.map((name) => ({ label: name, value: name })),
+                      "Selecciona una tarjeta"
+                    )}
+                    {addingTarjeta ? (
+                      <View style={styles.tarjetaAddRow}>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          {renderModalField(
+                            "Nueva tarjeta",
+                            <TextInput
+                              value={nuevaTarjeta}
+                              onChangeText={setNuevaTarjeta}
+                              placeholder="Nombre de la tarjeta"
+                              {...modalInputProps}
+                            />
+                          )}
+                        </View>
+                        <TouchableOpacity
+                          style={styles.tarjetaAddConfirm}
+                          onPress={addNuevaTarjeta}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={styles.tarjetaAddConfirmText}>Guardar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.tarjetaAddCancel}
+                          onPress={() => {
+                            setAddingTarjeta(false);
+                            setNuevaTarjeta("");
+                          }}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={styles.tarjetaAddCancelText}>Cancelar</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.tarjetaAddBtn}
+                        onPress={() => setAddingTarjeta(true)}
+                        activeOpacity={0.85}
+                      >
+                        <FontAwesome5 name="plus" size={12} color="#111111" />
+                        <Text style={styles.tarjetaAddBtnText}>Agregar más</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 )}
 
                 {renderFormSection(
                   "Fechas y tiempo",
                   <View style={styles.fechasSection}>
-                    <View style={styles.fechaBlock}>
+                    <View style={[styles.fechaBlock, isCompactModal && styles.fechaBlockTouch]}>
                       {renderDateTimeField(
                         "Fecha y hora de salida",
                         fechaSalida,
@@ -3680,17 +3854,14 @@ const renderDeleteConfirmModal = () => {
                         handleHoraSalidaChange
                       )}
                     </View>
-                    <View style={styles.fechaBlock}>
+                    <View style={[styles.fechaBlock, isCompactModal && styles.fechaBlockTouch]}>
                       {renderDateTimeField(
-                        "Tiempo estimado de llegada (opcional)",
+                        "Fecha de llegada",
                         fechaLlegada,
                         horaLlegada,
                         handleFechaLlegadaChange,
                         handleHoraLlegadaChange
                       )}
-                      <Text style={styles.fechaAutoHint}>
-                        Solo estimado. El viaje queda pendiente para el operador; no se marca como completado.
-                      </Text>
                     </View>
                     {renderTravelTimeCard()}
                     {renderYesNoToggle("¿Multidestino?", multidestino, setMultidestino)}
@@ -4730,6 +4901,43 @@ const styles = StyleSheet.create({
     gap: 12,
     alignSelf: "stretch",
   },
+  dateTimeRowPro: {
+    width: "100%",
+    maxWidth: "100%",
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 10,
+    alignSelf: "stretch",
+  },
+  dateTimeRowProStack: {
+    flexDirection: "column",
+  },
+  dateTimeColPro: {
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+  },
+  dateTimeColProFull: {
+    width: "100%",
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: "auto",
+  },
+  dateTimeLabelPro: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#6b7280",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  dateTimeIconBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   dateTimeHitBox: {
     position: "relative",
     width: "100%",
@@ -4747,10 +4955,24 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     ...(Platform.OS === "web" ? { cursor: "pointer" as const, boxSizing: "border-box" as any } : {}),
   },
+  dateTimeHitBoxPro: {
+    backgroundColor: "#ffffff",
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    minHeight: 50,
+    gap: 8,
+  },
+  dateTimeHitBoxNative: {
+    overflow: "visible",
+    minHeight: 52,
+  },
   dateTimeHitBoxTouch: {
     minHeight: 54,
-    paddingVertical: 14,
-    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderColor: "#d1d5db",
   },
   dateTimeHitText: {
     flex: 1,
@@ -4758,6 +4980,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: "#111111",
+  },
+  dateTimeHitTextPro: {
+    fontSize: 14,
+    fontWeight: "600",
+    letterSpacing: 0.2,
+  },
+  dateTimeHitTextTouch: {
+    fontSize: 15,
+    lineHeight: 20,
   },
   webNativePickerOverlay: {
     position: "absolute",
@@ -5324,13 +5555,18 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: "100%",
     alignSelf: "stretch",
-    backgroundColor: "#ffffff",
+    backgroundColor: "#fafafa",
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
+    borderColor: "#eceff3",
     padding: 14,
-    overflow: "hidden",
-    gap: 4,
+    overflow: "visible",
+    gap: 8,
+  },
+  fechaBlockTouch: {
+    padding: 14,
+    borderRadius: 14,
+    gap: 8,
   },
   fechasSection: {
     gap: 14,
@@ -5915,6 +6151,60 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginBottom: 10,
   },
+  tarjetaSection: {
+    gap: 10,
+  },
+  tarjetaAddBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: "#111111",
+    borderStyle: "dashed",
+    borderRadius: 12,
+    minHeight: 44,
+    backgroundColor: "#ffffff",
+  },
+  tarjetaAddBtnText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#111111",
+  },
+  tarjetaAddRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  tarjetaAddConfirm: {
+    backgroundColor: "#111111",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tarjetaAddConfirmText: {
+    color: "#ffffff",
+    fontWeight: "800",
+    fontSize: 13,
+  },
+  tarjetaAddCancel: {
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
+  },
+  tarjetaAddCancelText: {
+    color: "#6b7280",
+    fontWeight: "700",
+    fontSize: 13,
+  },
   yesNoRow: { flexDirection: "row", gap: 8 },
   yesNoOption: {
     flex: 1,
@@ -6134,13 +6424,20 @@ const styles = StyleSheet.create({
   iosPickerDone: {
     backgroundColor: "#111111",
     borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    minHeight: 44,
+    minWidth: 72,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iosPickerDonePressed: {
+    opacity: 0.85,
   },
   iosPickerDoneText: {
     color: "#ffffff",
     fontWeight: "700",
-    fontSize: 14,
+    fontSize: 15,
   },
   pickerOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -6152,22 +6449,31 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(15, 23, 42, 0.5)",
   },
+  pickerSafeArea: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
   pickerCard: {
     backgroundColor: "#ffffff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 24,
+    paddingTop: 14,
+    paddingBottom: 12,
     borderTopWidth: 1,
     borderColor: "#e5e7eb",
+  },
+  pickerCardAndroid: {
+    paddingBottom: 8,
   },
   pickerHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    marginBottom: 4,
+    marginBottom: 8,
+    minHeight: 44,
   },
   pickerTitle: {
     flex: 1,
@@ -6175,8 +6481,21 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#111111",
   },
+  pickerWheelWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    minHeight: Platform.OS === "android" ? 200 : 180,
+    overflow: "hidden",
+  },
   iosPicker: {
     alignSelf: "stretch",
+    width: "100%",
+    height: Platform.OS === "ios" ? 216 : undefined,
+  },
+  androidPicker: {
+    height: 200,
+    width: "100%",
   },
   modalSectionTitle: { fontSize: 13, fontWeight: "800", color: "#111111", marginBottom: 10, marginTop: 4, letterSpacing: 0.2,},
   modalSectionTitleMobile: { fontSize: 14, marginBottom: 12, marginTop: 8 },
