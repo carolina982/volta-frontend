@@ -417,12 +417,9 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
     editable: !fieldsLocked,
   };
 
-  const renderField = (label: string, field: React.ReactNode, lockedHint?: boolean) => (
+  const renderField = (label: string, field: React.ReactNode) => (
     <View style={styles.fieldGroup}>
-      <View style={styles.fieldLabelRow}>
-        <Text style={styles.fieldLabel}>{label}</Text>
-        {lockedHint ? <Text style={styles.fieldLockedTag}>Solo admin</Text> : null}
-      </View>
+      <Text style={styles.fieldLabel}>{label}</Text>
       {field}
     </View>
   );
@@ -557,8 +554,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                       onChangeText={setNombre}
                       returnKeyType="next"
                       {...inputProps}
-                    />,
-                    fieldsLocked
+                    />
                   )}
                 </View>
                 <View style={isLargeScreen ? styles.fieldRow : styles.fieldStack}>
@@ -571,8 +567,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                         onChangeText={setApellidoPaterno}
                         returnKeyType="next"
                         {...inputProps}
-                      />,
-                      fieldsLocked
+                      />
                     )}
                   </View>
                   <View style={isLargeScreen ? styles.fieldHalf : styles.fieldFull}>
@@ -584,8 +579,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                         onChangeText={setApellidoMaterno}
                         returnKeyType="next"
                         {...inputProps}
-                      />,
-                      fieldsLocked
+                      />
                     )}
                   </View>
                 </View>
@@ -601,8 +595,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                   autoCapitalize="none"
                   returnKeyType="next"
                   {...inputProps}
-                />,
-                fieldsLocked
+                />
               )}
 
               {renderField(
@@ -614,8 +607,7 @@ export default function PerfilPage({ currentUser, setCurrentUser }: PerfilPagePr
                   keyboardType="phone-pad"
                   returnKeyType="done"
                   {...inputProps}
-                />,
-                fieldsLocked
+                />
               )}
 
               <View style={styles.fieldGroup}>
@@ -862,26 +854,12 @@ const styles = StyleSheet.create({
   fieldHalf: { flex: 1 },
   fieldFull: { width: "100%" },
   fieldGroup: { marginBottom: 14, width: "100%" },
-  fieldLabelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 6,
-  },
   fieldLabel: {
     fontSize: 12,
     fontWeight: "700",
     color: "#374151",
     letterSpacing: 0.2,
-  },
-  fieldLockedTag: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#94a3b8",
-    backgroundColor: "#f1f5f9",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 999,
+    marginBottom: 6,
   },
   input: {
     width: "100%",

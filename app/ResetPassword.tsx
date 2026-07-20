@@ -1,7 +1,19 @@
+import { FontAwesome5 } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useState } from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { TextInput } from "react-native-paper";
+import { api } from "../services/api";
 
 export default function ResetPassword() {
   const { email } = useLocalSearchParams<{ email: string }>();
@@ -9,28 +21,38 @@ export default function ResetPassword() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
-  // Estados para manejo de errores debajo de los campos
   const [tokenError, setTokenError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [confirmError, setConfirmError] = useState("");
   const [generalError, setGeneralError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
+
+  const { width } = useWindowDimensions();
+  const [isMounted, setIsMounted] = useState(false);
+  const isLargeScreen = isMounted && width >= 768;
+  const emailStr = String(email || "").trim().toLowerCase();
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const handleReset = async () => {
-    // Limpiar errores previos
     setTokenError("");
     setPasswordError("");
     setConfirmError("");
     setGeneralError("");
+    setSuccessMsg("");
 
-    if (!email) {
+    if (!emailStr) {
       setGeneralError("El correo electrónico de recuperación no es válido.");
       return;
     }
 
     let hasError = false;
 
-    if (!token) {
+    if (!token.trim()) {
       setTokenError("El código de recuperación es requerido.");
       hasError = true;
     }
@@ -38,7 +60,7 @@ export default function ResetPassword() {
     if (!password) {
       setPasswordError("La contraseña nueva es requerida.");
       hasError = true;
-    } else if (password.length < 6) { // <-- Validación de contraseña fuerte
+    } else if (password.length < 6) {
       setPasswordError("La contraseña debe tener al menos 6 caracteres.");
       hasError = true;
     }
@@ -54,121 +76,254 @@ export default function ResetPassword() {
     if (hasError) return;
 
     setLoading(true);
-
     try {
-      const response = await fetch(
-        "https://volta-backend-px1a.onrender.com/api/auth/reset-password",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: email.toString().toLowerCase(),
-            token: token.trim(),
-            // Enviamos el string en texto plano. El backend se encargará del hasheo final
-            // solucionando el problema de 'Reset hashea contraseña dos veces'.
-            newPassword: password, 
-          }),
-        }
-      );
+      await api.post("/auth/reset-password", {
+        email: emailStr,
+        token: token.trim(),
+        newPassword: password,
+      });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        setGeneralError(data.message || "Código inválido o expirado.");
-        return;
-      }
-
-      // CORREGIDO: Redirección inmediata y limpia al Login sin Alerts intermedios que alteren la UX
-      router.replace("/Login");
-
+      setSuccessMsg("Contraseña actualizada. Redirigiendo al login…");
+      setTimeout(() => {
+        router.replace("/Login");
+      }, 900);
     } catch (error: any) {
-      setGeneralError("No se pudo conectar con el servidor. Inténtalo más tarde.");
+      const serverMsg = error?.response?.data?.message;
+      setGeneralError(serverMsg || "Código inválido o expirado. Solicita uno nuevo.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      
-      {/* CORREGIDO: Pantalla de carga bloqueante idéntica a la estética de todo el flujo */}
-      {loading && (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color="#ffffff" />
-          <Text style={styles.loadingText}>Actualizando contraseña...</Text>
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+    >
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <View style={[styles.container, isLargeScreen && styles.containerDesktop]}>
+          <View style={[styles.card, isLargeScreen && styles.cardDesktop]}>
+            {loading && (
+              <View style={styles.loadingOverlay}>
+                <ActivityIndicator size="large" color="#ffffff" />
+                <Text style={styles.loadingText}>Actualizando contraseña...</Text>
+              </View>
+            )}
+
+            <View style={styles.brandRow}>
+              <View style={styles.logoBadge}>
+                <FontAwesome5 name="lock" size={isLargeScreen ? 26 : 22} color="#ffffff" />
+              </View>
+              <Text style={styles.title}>Nueva contraseña</Text>
+              <Text style={styles.description}>
+                {emailStr
+                  ? `Enviamos un código a ${emailStr}. Introdúcelo junto con tu nueva contraseña.`
+                  : "Introduce el código de recuperación y tu nueva contraseña."}
+              </Text>
+            </View>
+
+            <TextInput
+              placeholder="Código de verificación"
+              placeholderTextColor="#9ca3af"
+              value={token}
+              onChangeText={(text) => {
+                setToken(text);
+                setTokenError("");
+              }}
+              keyboardType="number-pad"
+              autoCapitalize="none"
+              mode="flat"
+              underlineColor={tokenError ? "#dc2626" : "#d1d5db"}
+              activeUnderlineColor={tokenError ? "#dc2626" : "#111111"}
+              dense
+              contentStyle={styles.inputContent}
+              style={styles.input}
+            />
+            {tokenError ? <Text style={styles.errorText}>{tokenError}</Text> : null}
+
+            <TextInput
+              placeholder="Contraseña nueva"
+              placeholderTextColor="#9ca3af"
+              value={password}
+              onChangeText={(text) => {
+                setPassword(text);
+                setPasswordError("");
+              }}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              mode="flat"
+              underlineColor={passwordError ? "#dc2626" : "#d1d5db"}
+              activeUnderlineColor={passwordError ? "#dc2626" : "#111111"}
+              dense
+              contentStyle={styles.inputContent}
+              style={styles.input}
+              right={
+                <TextInput.Icon
+                  icon={showPassword ? "eye-off" : "eye"}
+                  color="#111111"
+                  onPress={() => setShowPassword((v) => !v)}
+                />
+              }
+            />
+            {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
+
+            <TextInput
+              placeholder="Confirmar contraseña"
+              placeholderTextColor="#9ca3af"
+              value={confirm}
+              onChangeText={(text) => {
+                setConfirm(text);
+                setConfirmError("");
+              }}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              mode="flat"
+              underlineColor={confirmError ? "#dc2626" : "#d1d5db"}
+              activeUnderlineColor={confirmError ? "#dc2626" : "#111111"}
+              dense
+              contentStyle={styles.inputContent}
+              style={styles.input}
+            />
+            {confirmError ? <Text style={styles.errorText}>{confirmError}</Text> : null}
+
+            {generalError ? <Text style={styles.generalErrorText}>{generalError}</Text> : null}
+            {successMsg ? <Text style={styles.successText}>{successMsg}</Text> : null}
+
+            <TouchableOpacity
+              style={[styles.button, loading && styles.buttonDisabled]}
+              onPress={handleReset}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.buttonText}>Guardar contraseña</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => router.push("/ForgotPassword")}
+              style={styles.backLink}
+            >
+              <Text style={styles.linkText}>← Volver a solicitar código</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push("/Login")} style={styles.backLinkSecondary}>
+              <Text style={styles.linkTextMuted}>Ir al inicio de sesión</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      )}
-
-      <Text style={styles.title}>Nueva contraseña</Text>
-      
-      {/* Input de Código */}
-      <TextInput 
-        placeholder="Código de verificación"
-        value={token}
-        onChangeText={(text) => { setToken(text); setTokenError(""); }}
-        mode="flat"
-        underlineColor={tokenError ? "#ff3333" : "#0d75bb"}
-        activeUnderlineColor={tokenError ? "#ff3333" : "#0d75bb"}
-        style={styles.input} 
-        contentStyle={{ color: "#000", fontWeight: "600" }}
-      />
-      {tokenError ? <Text style={styles.errorText}>{tokenError}</Text> : null}
-
-      {/* Input de Nueva Contraseña */}
-      <TextInput 
-        placeholder="Contraseña nueva"
-        value={password}
-        onChangeText={(text) => { setPassword(text); setPasswordError(""); }}
-        secureTextEntry 
-        mode="flat"
-        underlineColor={passwordError ? "#ff3333" : "#0d75bb"}
-        activeUnderlineColor={passwordError ? "#ff3333" : "#0d75bb"}
-        style={styles.input}
-        contentStyle={{ color: "#000", fontWeight: "600" }}
-      />
-      {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
-
-      {/* Input de Confirmación */}
-      <TextInput 
-        placeholder="Confirmar contraseña"
-        value={confirm}
-        onChangeText={(text) => { setConfirm(text); setConfirmError(""); }}
-        secureTextEntry 
-        mode="flat"
-        underlineColor={confirmError ? "#ff3333" : "#0d75bb"}
-        activeUnderlineColor={confirmError ? "#ff3333" : "#0d75bb"} 
-        style={styles.input}
-        contentStyle={{ color: "#000", fontWeight: "600" }}
-      />
-      {confirmError ? <Text style={styles.errorText}>{confirmError}</Text> : null}
-
-      {generalError ? <Text style={styles.generalErrorText}>{generalError}</Text> : null}
-
-      <TouchableOpacity 
-        style={[styles.button, loading && { opacity: 0.6 }]}
-        onPress={handleReset}
-        disabled={loading}
-      >
-        <Text style={styles.buttonText}>Guardar contraseña</Text>
-      </TouchableOpacity>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20, backgroundColor: "#f8f9fa" },
-  title: { fontSize: 26, fontWeight: "bold", marginBottom: 25, color: "#007bff" },
-  input: { width: "100%", height: 50, backgroundColor: "transparent", marginTop: 5 },
-  errorText: { width: "100%", color: "#ff3333", fontSize: 13, marginTop: 2, marginBottom: 8, alignSelf: "flex-start", paddingLeft: 5 },
-  generalErrorText: { color: "#ff3333", fontSize: 15, fontWeight: "bold", marginVertical: 10, textAlign: "center" },
-  button: { width: "100%", height: 50, backgroundColor: "#007bff", borderRadius: 10, justifyContent: "center", alignItems: "center", marginTop: 15 },
-  buttonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  screen: {
+    flex: 1,
+    backgroundColor: "#f3f4f6",
+    ...(Platform.OS === "web" ? { minHeight: "100vh" as any } : {}),
+  },
+  scrollContent: {
+    flexGrow: 1,
+    width: "100%",
+    ...(Platform.OS === "web" ? { minHeight: "100vh" as any } : {}),
+  },
+  container: {
+    flex: 1,
+    width: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 24,
+    backgroundColor: "#ffffff",
+    ...(Platform.OS === "web" ? { minHeight: "100vh" as any } : {}),
+  },
+  containerDesktop: {
+    backgroundColor: "#f3f4f6",
+    paddingHorizontal: 32,
+    paddingVertical: 48,
+  },
+  card: {
+    width: "100%",
+    maxWidth: 420,
+    alignSelf: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 20,
+    paddingVertical: 28,
+    position: "relative",
+    ...(Platform.OS === "web" ? { boxShadow: "0 12px 40px rgba(0,0,0,0.08)" as any } : {}),
+  },
+  cardDesktop: {
+    paddingHorizontal: 36,
+    paddingVertical: 40,
+    maxWidth: 440,
+  },
+  brandRow: { alignItems: "center", marginBottom: 20 },
+  logoBadge: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#111111",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#111111",
+    textAlign: "center",
+    letterSpacing: 0.3,
+  },
+  description: {
+    fontSize: 14,
+    color: "#6b7280",
+    textAlign: "center",
+    marginTop: 8,
+    lineHeight: 20,
+    paddingHorizontal: 4,
+  },
+  input: { width: "100%", height: 48, backgroundColor: "transparent", marginTop: 8 },
+  inputContent: { color: "#111111", fontWeight: "600" },
+  errorText: { width: "100%", color: "#dc2626", fontSize: 12, marginTop: 4 },
+  generalErrorText: {
+    color: "#dc2626",
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 10,
+    textAlign: "center",
+  },
+  successText: {
+    color: "#059669",
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 10,
+    textAlign: "center",
+  },
+  button: {
+    width: "100%",
+    minHeight: 50,
+    backgroundColor: "#111111",
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 16,
+    paddingVertical: 12,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  buttonDisabled: { opacity: 0.5 },
+  buttonText: { color: "#ffffff", fontSize: 15, fontWeight: "700", textAlign: "center" },
+  backLink: { marginTop: 18, alignSelf: "center" },
+  backLinkSecondary: { marginTop: 10, alignSelf: "center" },
+  linkText: { color: "#111111", fontSize: 14, fontWeight: "600", textDecorationLine: "underline" },
+  linkTextMuted: { color: "#6b7280", fontSize: 13, fontWeight: "500", textDecorationLine: "underline" },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(15, 23, 42, 0.75)",
+    backgroundColor: "rgba(0, 0, 0, 0.72)",
     zIndex: 999,
     justifyContent: "center",
     alignItems: "center",
+    borderRadius: 16,
   },
-  loadingText: { marginTop: 14, color: "#ffffff", fontWeight: "700", fontSize: 16 }
+  loadingText: { marginTop: 14, color: "#ffffff", fontWeight: "600", fontSize: 15 },
 });

@@ -355,9 +355,13 @@ export default function Dashboard() {
     refreshUnread();
   };
 
-  const handleNotificationPress = (id: string, read: boolean) => {
+  const handleNotificationPress = (id: string, read: boolean, type?: string) => {
     if (!read) markRead(id);
-    setTab("Viajes");
+    if (type === "announcement_published") {
+      setTab("Inicio");
+    } else {
+      setTab("Viajes");
+    }
     closeNotifications();
   };
 
@@ -371,6 +375,21 @@ export default function Dashboard() {
       });
     } catch {
       return "";
+    }
+  };
+
+  const getNotificationIcon = (type: string) => {
+    switch (type) {
+      case "trip_assigned":
+        return { name: "route" as const, color: "#111111", bg: "#f3f4f6" };
+      case "companion_assigned":
+        return { name: "user-friends" as const, color: "#111111", bg: "#f3f4f6" };
+      case "trip_completed":
+        return { name: "check-circle" as const, color: "#059669", bg: "#ecfdf5" };
+      case "announcement_published":
+        return { name: "bullhorn" as const, color: "#111111", bg: "#f3f4f6" };
+      default:
+        return { name: "bell" as const, color: "#374151", bg: "#f3f4f6" };
     }
   };
 
@@ -433,26 +452,38 @@ export default function Dashboard() {
             </View>
           ) : (
             <ScrollView style={styles.notificationsList} showsVerticalScrollIndicator={false}>
-              {notifications.map((item) => (
-                <TouchableOpacity
-                  key={item.id}
-                  style={[
-                    styles.notificationItem,
-                    !item.read && styles.notificationItemUnread,
-                  ]}
-                  onPress={() => handleNotificationPress(item.id, item.read)}
-                  activeOpacity={0.85}
-                >
-                  <View style={styles.notificationItemTop}>
-                    <Text style={styles.notificationItemTitle}>{item.title}</Text>
-                    {!item.read && <View style={styles.notificationDot} />}
-                  </View>
-                  <Text style={styles.notificationItemBody}>{item.body}</Text>
-                  <Text style={styles.notificationItemDate}>
-                    {formatNotificationDate(item.createdAt)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {notifications.map((item) => {
+                const icon = getNotificationIcon(item.type);
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[
+                      styles.notificationItem,
+                      !item.read && styles.notificationItemUnread,
+                    ]}
+                    onPress={() => handleNotificationPress(item.id, item.read, item.type)}
+                    activeOpacity={0.85}
+                  >
+                    <View style={[styles.notificationIconBadge, { backgroundColor: icon.bg }]}>
+                      <FontAwesome5 name={icon.name} size={14} color={icon.color} solid />
+                    </View>
+                    <View style={styles.notificationItemContent}>
+                      <View style={styles.notificationItemTop}>
+                        <Text style={styles.notificationItemTitle} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                        {!item.read && <View style={styles.notificationDot} />}
+                      </View>
+                      <Text style={styles.notificationItemBody} numberOfLines={3}>
+                        {item.body}
+                      </Text>
+                      <Text style={styles.notificationItemDate}>
+                        {formatNotificationDate(item.createdAt)}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
           )}
         </Pressable>
@@ -997,7 +1028,7 @@ const styles = StyleSheet.create({
   notificationsMarkAll: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#2563eb",
+    color: "#111111",
   },
   notificationsList: {
     maxHeight: 400,
@@ -1014,6 +1045,9 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   notificationItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
@@ -1022,6 +1056,18 @@ const styles = StyleSheet.create({
   },
   notificationItemUnread: {
     backgroundColor: "#f8fafc",
+  },
+  notificationIconBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  notificationItemContent: {
+    flex: 1,
+    minWidth: 0,
   },
   notificationItemTop: {
     flexDirection: "row",
@@ -1039,7 +1085,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: "#2563eb",
+    backgroundColor: "#111111",
   },
   notificationItemBody: {
     marginTop: 4,

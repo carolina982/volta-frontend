@@ -1,6 +1,6 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
-import { File, Paths } from "expo-file-system";
+import { File as ExpoFile, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -833,15 +833,18 @@ const exportViaticosToExcel =async ()=>{
       });
       // En web móvil preferir compartir; en escritorio descarga directa
       const nav = typeof navigator !== "undefined" ? (navigator as any) : null;
-      if (nav?.share && typeof File !== "undefined") {
+      const BrowserFile = typeof globalThis !== "undefined" ? (globalThis as any).File : undefined;
+      if (nav?.share && typeof BrowserFile === "function") {
         try {
-          const file = new File([blob], filename, { type: blob.type });
+          const file = new BrowserFile([blob], filename, { type: blob.type });
           if (!nav.canShare || nav.canShare({ files: [file] })) {
             await nav.share({ files: [file], title: filename });
             window.alert("Éxito\nReporte Excel generado correctamente");
             return;
           }
-        } catch {
+        } catch (shareErr: any) {
+          const msg = String(shareErr?.message || shareErr || "");
+          if (/abort|cancel|dismiss|NotAllowedError/i.test(msg)) return;
           // canceló o no disponible → descarga
         }
       }
@@ -857,17 +860,14 @@ const exportViaticosToExcel =async ()=>{
       window.alert("Éxito\nReporte Excel descargado correctamente");
       return;
     }
-    const base64=XLSX.write(wb,{
-      bookType:"xlsx",
-      type:"base64",
-    });
+    const bytes = XLSX.write(wb, {
+      bookType: "xlsx",
+      type: "uint8array",
+    }) as Uint8Array;
     const safeName = filename.replace(/[^\w.\-]+/g, "_");
-    const file = new File(Paths.document, safeName);
-    if (file.exists) {
-      file.delete();
-    }
-    file.create();
-    file.write(base64, { encoding: "base64" });
+    const file = new ExpoFile(Paths.document, safeName);
+    file.create({ overwrite: true, intermediates: true });
+    file.write(bytes);
     const canShare=await Sharing.isAvailableAsync();
     if (!canShare){
       Alert.alert("Error","No se puede compartir el archivo ");
@@ -881,6 +881,10 @@ const exportViaticosToExcel =async ()=>{
     Alert.alert("Exito","Reporte generado correctamente");
   }catch (error: any){
     console.error("Error exportando",error);
+    const msg = String(error?.message || error || "");
+    if (/abort|cancel|dismiss|sharing.*reject/i.test(msg)) {
+      return;
+    }
     if (Platform.OS === "web") {
       window.alert(
         `Error\nNo se pudo generar el archivo Excel${
@@ -1053,7 +1057,11 @@ const openModal = useCallback((viatico?: Viatico, opts?: { edit?: boolean }) => 
         if (Platform.OS === "web") {
           const response = await fetch(factura);
           const blob = await response.blob();
-          const file = new File([blob], "factura.jpg", { type: blob.type || "image/jpeg" });
+          const BrowserFile = typeof globalThis !== "undefined" ? (globalThis as any).File : undefined;
+          if (typeof BrowserFile !== "function") {
+            throw new Error("No se pudo preparar el archivo de factura en web");
+          }
+          const file = new BrowserFile([blob], "factura.jpg", { type: blob.type || "image/jpeg" });
           formData.append("factura", file);
         } else {
           const uri = factura.startsWith("file://") ? factura : `file://${factura}`;

@@ -26,7 +26,6 @@ const emptyChecklistState = (): Record<ChecklistId, boolean> =>
 /** Checklist de entrega al finalizar (marcar solo lo que se entrega). */
 const FINISH_TRIP_CHECKLIST = [
   { id: "montacargas", label: "Montacargas" },
-  { id: "alineamientos", label: "Adlinamientos" },
   { id: "llaves", label: "Llaves de equipo" },
   { id: "extintores", label: "Extintores" },
   { id: "cargadores", label: "Cargadores" },
@@ -60,10 +59,25 @@ const buildChecklistPayload = (
   completadoEn: new Date().toISOString(),
 });
 
+/** Quita "Adlinamientos/Alineamientos" de checklists guardados (ya no se usa). */
+const isRemovedChecklistItem = (it?: { id?: string; label?: string } | null) => {
+  const id = String(it?.id || "").toLowerCase().trim();
+  const label = String(it?.label || "").toLowerCase().trim();
+  return (
+    id === "alineamientos" ||
+    id === "adlinamientos" ||
+    label.includes("adlinamient") ||
+    label.includes("alineamient")
+  );
+};
+
+const filterChecklistItems = <T extends { id?: string; label?: string }>(items?: T[] | null): T[] =>
+  (Array.isArray(items) ? items : []).filter((it) => !isRemovedChecklistItem(it));
+
 /** Serializa un checklist guardado a texto legible para el Excel. */
 const formatChecklistForExcel = (checklist?: ChecklistSaved | null): string => {
   if (!checklist || !Array.isArray(checklist.items)) return "";
-  const marcados = checklist.items
+  const marcados = filterChecklistItems(checklist.items)
     .filter((it) => it.checked)
     .map((it) => it.label);
   const partes: string[] = [];
@@ -281,8 +295,6 @@ const emptyDestinoExtra = () => ({
   unidadId: "",
   conductorId: "",
   acompanante: "",
-  kmSalida: "",
-  kmLlegada: "",
 });
 
 type DestinoExtraForm = ReturnType<typeof emptyDestinoExtra>;
@@ -295,11 +307,34 @@ const normalizeDestinosExtrasList = (value: any): DestinoExtraTrip[] => {
 
 const getTripEstadoKey = (estado?: string) => (estado || "").toLowerCase().trim();
 
-const getTotalDestinosCount = (trip: Pick<Trip, "multidestino" | "destinoExtra">) =>
-  1 + (trip.multidestino ? normalizeDestinosExtrasList(trip.destinoExtra).length : 0);
+const getTotalDestinosCount = (trip: Pick<Trip, "multidestino" | "destinoExtra">) => {
+  const extras = normalizeDestinosExtrasList(trip.destinoExtra).length;
+  if (trip.multidestino || extras > 0) return 1 + extras;
+  return 1;
+};
 
-const getOperadorLegInfo = (trip: Trip, index = trip.destinoActualIndex ?? 0) => {
+/** Número humano 1-based del destino actual (1 = principal). */
+/** Índice efectivo del destino en curso (0-based). Usa checklist de paradas si el índice no avanzó (bug móvil). */
+const getEffectiveDestinoIndex = (
+  trip: Pick<Trip, "destinoActualIndex" | "checklistParadas" | "multidestino" | "destinoExtra">
+) => {
+  const total = getTotalDestinosCount(trip);
+  const raw = Number(trip.destinoActualIndex ?? 0);
+  const fromField = Number.isFinite(raw) && raw >= 0 ? raw : 0;
+  const finished = Array.isArray(trip.checklistParadas) ? trip.checklistParadas.length : 0;
+  // Cada parada cerrada implica que el índice mínimo es finished (ya va en el siguiente).
+  const inferred = Math.max(fromField, finished);
+  return Math.min(inferred, Math.max(0, total - 1));
+};
+
+/** Número humano 1-based del destino actual (1 = principal). */
+const getDestinoNumero = (
+  trip: Pick<Trip, "destinoActualIndex" | "checklistParadas" | "multidestino" | "destinoExtra">
+) => getEffectiveDestinoIndex(trip) + 1;
+
+const getOperadorLegInfo = (trip: Trip, index = getEffectiveDestinoIndex(trip)) => {
   const extras = normalizeDestinosExtrasList(trip.destinoExtra);
+  const total = getTotalDestinosCount(trip);
   if (index <= 0) {
     return {
       destino: trip.destino || "—",
@@ -307,7 +342,9 @@ const getOperadorLegInfo = (trip: Trip, index = trip.destinoActualIndex ?? 0) =>
       fechaLlegada: trip.fechaLlegada,
       unidadId: trip.unidadId,
       acompanante: trip.acompanante,
-      label: "Destino principal",
+      label: total > 1 ? `Destino 1 de ${total}` : "Destino",
+      numero: 1,
+      total,
     };
   }
   const extra = extras[index - 1];
@@ -317,7 +354,9 @@ const getOperadorLegInfo = (trip: Trip, index = trip.destinoActualIndex ?? 0) =>
     fechaLlegada: extra?.fechaLlegada,
     unidadId: extra?.unidadId || trip.unidadId,
     acompanante: (extra?.acompanante as any) ?? trip.acompanante,
-    label: `Destino #${index + 1}`,
+    label: `Destino ${index + 1} de ${total}`,
+    numero: index + 1,
+    total,
   };
 };
 
@@ -450,15 +489,18 @@ const downloadExcelFile = async (wb: XLSX.WorkBook, filename: string) => {
 
     // En móvil (Safari/Chrome) el <a download> falla a menudo; preferir compartir archivo.
     const nav = typeof navigator !== "undefined" ? (navigator as any) : null;
-    if (nav?.share && typeof File !== "undefined") {
+    const BrowserFile = typeof globalThis !== "undefined" ? (globalThis as any).File : undefined;
+    if (nav?.share && typeof BrowserFile === "function") {
       try {
-        const file = new File([blob], filename, { type: blob.type });
+        const file = new BrowserFile([blob], filename, { type: blob.type });
         if (!nav.canShare || nav.canShare({ files: [file] })) {
           await nav.share({ files: [file], title: filename });
           return;
         }
-      } catch {
-        // Usuario canceló o share no disponible → descarga clásica
+      } catch (shareErr: any) {
+        const msg = String(shareErr?.message || shareErr || "");
+        if (/abort|cancel|dismiss|NotAllowedError/i.test(msg)) return;
+        // share no disponible → descarga clásica
       }
     }
 
@@ -474,16 +516,14 @@ const downloadExcelFile = async (wb: XLSX.WorkBook, filename: string) => {
     return;
   }
 
-  const base64 = XLSX.write(wb, { bookType: "xlsx", type: "base64" });
+  // Android / iOS: escribir bytes binarios y abrir el sheet nativo de compartir.
+  const bytes = XLSX.write(wb, { bookType: "xlsx", type: "uint8array" }) as Uint8Array;
   const { File, Paths } = await import("expo-file-system");
   const Sharing = await import("expo-sharing");
   const safeName = String(filename || "reporte.xlsx").replace(/[^\w.\-]+/g, "_");
   const file = new File(Paths.document, safeName);
-  if (file.exists) {
-    file.delete();
-  }
-  file.create();
-  file.write(base64, { encoding: "base64" });
+  file.create({ overwrite: true, intermediates: true });
+  file.write(bytes);
   if (!(await Sharing.isAvailableAsync())) {
     throw new Error("sharing_unavailable");
   }
@@ -545,10 +585,6 @@ const mapDestinoExtraFromTrip = (item: DestinoExtraTrip): DestinoExtraForm => {
     unidadId: item.unidadId || "",
     conductorId: toId(item.conductorId),
     acompanante: toId(item.acompanante) || "",
-    kmSalida:
-      item.kilometrajeSalida?.[0]?.numero != null ? String(item.kilometrajeSalida[0].numero) : "",
-    kmLlegada:
-      item.kilometrajeLlegada?.[0]?.numero != null ? String(item.kilometrajeLlegada[0].numero) : "",
   };
 };
 
@@ -637,10 +673,7 @@ export default function TripsPage() {
   const [checklistTrip, setChecklistTrip] = useState<Trip | null>(null);
   const [checklistChecked, setChecklistChecked] = useState<Record<ChecklistId, boolean>>(emptyChecklistState);
   const [finishChecklistTrip, setFinishChecklistTrip] = useState<Trip | null>(null);
-  const [finishMode, setFinishMode] = useState<
-    "final" | "parada" | "recepcion" | "recepcion-parada"
-  >("final");
-  const [pendingParadaEntrega, setPendingParadaEntrega] = useState<ChecklistSaved | null>(null);
+  const [finishMode, setFinishMode] = useState<"final" | "parada" | "recepcion">("final");
   const [finishChecklistChecked, setFinishChecklistChecked] = useState<Record<FinishChecklistId, boolean>>(
     emptyFinishChecklistState
   );
@@ -761,8 +794,21 @@ export default function TripsPage() {
     );
   };
 
+  /** Nuevo destino hereda unidad/operador/acompañante del mismo viaje (Destino 1).
+   *  La salida del siguiente tramo toma la fecha/hora de llegada del Destino 1. */
+  const buildDestinoExtraFromMain = useCallback((): DestinoExtraForm => {
+    return {
+      ...emptyDestinoExtra(),
+      unidadId: unidadId || "",
+      conductorId: conductorId || "",
+      acompanante: acompanante || "none",
+      fechaSalida: fechaLlegada || "",
+      horaSalida: horaLlegada || "",
+    };
+  }, [unidadId, conductorId, acompanante, fechaLlegada, horaLlegada]);
+
   const addDestinoExtra = () => {
-    setDestinosExtras((prev) => [...prev, emptyDestinoExtra()]);
+    setDestinosExtras((prev) => [...prev, buildDestinoExtraFromMain()]);
   };
 
   const removeDestinoExtra = (index: number) => {
@@ -994,19 +1040,18 @@ export default function TripsPage() {
   }, [units]);
 
   const buildDeliveryStops = useCallback((trip: Trip) => {
-    const currentIndex = trip.destinoActualIndex ?? 0;
+    const currentIndex = getEffectiveDestinoIndex(trip);
     const estadoKey = getTripEstadoKey(trip.estado);
     const extras = normalizeDestinosExtrasList(trip.destinoExtra);
+    const total = 1 + extras.length;
     const stops = [
       {
         key: "main",
         index: 0,
-        title: "Entrega principal",
+        title: total > 1 ? `Destino 1 de ${total}` : "Destino",
         destino: trip.destino || "—",
         fechaSalida: trip.fechaSalida,
         fechaLlegada: trip.fechaLlegada,
-        kmSalida: formatKmLabel(trip.kilometrajeSalida),
-        kmLlegada: formatKmLabel(trip.kilometrajeLlegada),
         defEntregado: trip.def?.trim() ? trip.def.trim() : "—",
         isCurrent: currentIndex === 0 && estadoKey !== "completado",
         isDone:
@@ -1019,12 +1064,10 @@ export default function TripsPage() {
         return {
           key: `extra-${i}`,
           index: idx,
-          title: `Punto de entrega ${idx + 1}`,
+          title: `Destino ${idx + 1} de ${total}`,
           destino: extra?.destino || "—",
           fechaSalida: extra?.fechaSalida,
           fechaLlegada: extra?.fechaLlegada,
-          kmSalida: formatKmLabel(extra?.kilometrajeSalida),
-          kmLlegada: formatKmLabel(extra?.kilometrajeLlegada),
           defEntregado: null as string | null,
           isCurrent: currentIndex === idx && estadoKey !== "completado",
           isDone:
@@ -1066,7 +1109,7 @@ export default function TripsPage() {
             <Text style={styles.sheetDocLabel}>Hoja de viaje</Text>
             <Text style={styles.sheetDocMeta}>
               {liveTrip.multidestino
-                ? `Itinerario · ${stops.length} puntos de entrega`
+                ? `Orden fijo · primero Destino 1, luego 2… (${stops.length} puntos)`
                 : "Entrega única"}
             </Text>
           </View>
@@ -1080,7 +1123,11 @@ export default function TripsPage() {
           <Text style={styles.sheetHeroEyebrow}>Ruta</Text>
           <Text style={styles.sheetHeroTitle}>{liveTrip.rutaAcubrir || "Sin ruta"}</Text>
           <View style={styles.sheetHeroDivider} />
-          <Text style={styles.sheetHeroEyebrow}>Destino de entrega</Text>
+          <Text style={styles.sheetHeroEyebrow}>
+            {liveTrip.multidestino
+              ? `Ahora · Destino ${getDestinoNumero(liveTrip)} de ${stops.length}`
+              : "Destino de entrega"}
+          </Text>
           <Text style={styles.sheetHeroDestino}>{currentStop?.destino || liveTrip.destino || "—"}</Text>
         </View>
 
@@ -1151,18 +1198,6 @@ export default function TripsPage() {
                         </Text>
                       </View>
                     </View>
-                    {isAdmin ? (
-                      <View style={styles.sheetStopTimes}>
-                        <View style={styles.sheetStopTimeBlock}>
-                          <Text style={styles.sheetStopTimeLabel}>KM Salida</Text>
-                          <Text style={styles.sheetStopTimeValue}>{stop.kmSalida}</Text>
-                        </View>
-                        <View style={styles.sheetStopTimeBlock}>
-                          <Text style={styles.sheetStopTimeLabel}>KM Llegada</Text>
-                          <Text style={styles.sheetStopTimeValue}>{stop.kmLlegada}</Text>
-                        </View>
-                      </View>
-                    ) : null}
                     {stop.defEntregado ? (
                       <View style={styles.sheetStopDefRow}>
                         <FontAwesome5 name="gas-pump" size={11} color="#6b7280" />
@@ -1286,7 +1321,7 @@ export default function TripsPage() {
     emptyLabel: string,
     key?: string
   ) => {
-    const items = checklist?.items || [];
+    const items = filterChecklistItems(checklist?.items);
     const extras = (checklist?.extras || "").trim();
     const hasData = items.length > 0 || Boolean(extras);
 
@@ -1506,10 +1541,65 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
         payload.checklistFin ||
         payload.checklistParada
     );
+    // Si hay índice u otros campos, no usar el PUT de solo estado (en móvil a veces “gana” y deja el índice en 0).
+    const hasMoreThanEstado = Object.keys(payload).some((k) => k !== "estado");
+
+    const applyLocalTripPatch = (serverTrip: any | null) => {
+      const patch: Partial<Trip> = {};
+      if (payload.estado != null) patch.estado = String(payload.estado);
+      if (payload.destinoActualIndex != null && payload.destinoActualIndex !== "") {
+        patch.destinoActualIndex = Number(payload.destinoActualIndex) || 0;
+      }
+      if (payload.multidestino != null) patch.multidestino = Boolean(payload.multidestino);
+      if (payload.destinoExtra != null) patch.destinoExtra = payload.destinoExtra;
+      if (payload.checklistInicio != null) patch.checklistInicio = payload.checklistInicio;
+      if (payload.checklistRecepcion != null) patch.checklistRecepcion = payload.checklistRecepcion;
+      if (payload.checklistFin != null) patch.checklistFin = payload.checklistFin;
+      if (payload.checklistParada != null) {
+        // Empuja la parada localmente para que el UI móvil oculte "Finalizar destino" al instante.
+        const applyParada = (prev: Trip): Trip => {
+          const fromServer = Array.isArray((serverTrip as any)?.checklistParadas)
+            ? (serverTrip as any).checklistParadas
+            : null;
+          const prevList = Array.isArray(prev.checklistParadas) ? prev.checklistParadas : [];
+          return {
+            ...prev,
+            ...(serverTrip || {}),
+            ...patch,
+            checklistParadas: fromServer || [...prevList, payload.checklistParada],
+            id: prev.id,
+          };
+        };
+        setEditingTrip((prev) => {
+          if (!prev || String(prev.id) !== tripId) return prev;
+          return applyParada(prev);
+        });
+        setTrips((prev) =>
+          prev.map((t) => (String(t.id) !== tripId ? t : applyParada(t)))
+        );
+        return;
+      }
+
+      setEditingTrip((prev) => {
+        if (!prev || String(prev.id) !== tripId) return prev;
+        const merged = serverTrip
+          ? { ...prev, ...serverTrip, id: prev.id }
+          : { ...prev };
+        return { ...merged, ...patch, id: prev.id };
+      });
+
+      setTrips((prev) =>
+        prev.map((t) => {
+          if (String(t.id) !== tripId) return t;
+          const merged = serverTrip ? { ...t, ...serverTrip, id: t.id } : { ...t };
+          return { ...merged, ...patch, id: t.id };
+        })
+      );
+    };
 
     const attempts: Array<{ label: string; run: () => Promise<any> }> = [];
 
-    if (!hasChecklist) {
+    if (!hasChecklist && !hasMoreThanEstado) {
       attempts.push({
         label: "PUT /trips/:id (estado)",
         run: () => api.put(`/trips/${tripId}`, { estado: payload.estado }, { timeout: 45000 }),
@@ -1547,25 +1637,7 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
             ? { ...resp.data.trip, id: resp.data.trip._id || resp.data.trip.id || tripId }
             : null;
 
-          // Actualiza al instante el detalle abierto (incluye checklists) sin esperar la recarga.
-          setEditingTrip((prev) => {
-            if (!prev || String(prev.id) !== tripId) return prev;
-            if (serverTrip) return { ...prev, ...serverTrip, id: prev.id };
-            return {
-              ...prev,
-              estado: payload.estado ?? prev.estado,
-              destinoActualIndex: payload.destinoActualIndex ?? prev.destinoActualIndex,
-              checklistInicio: payload.checklistInicio ?? prev.checklistInicio,
-              checklistRecepcion: payload.checklistRecepcion ?? prev.checklistRecepcion,
-              checklistFin: payload.checklistFin ?? prev.checklistFin,
-            };
-          });
-
-          if (serverTrip) {
-            setTrips((prev) =>
-              prev.map((t) => (String(t.id) === tripId ? { ...t, ...serverTrip, id: t.id } : t))
-            );
-          }
+          applyLocalTripPatch(serverTrip);
 
           // Recarga en background: no debe tumbar el éxito en móvil
           void loadTrips().catch((e) => console.warn("[OP_START_V3] loadTrips:", e));
@@ -1627,18 +1699,18 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
     );
   };
 
-  /** Abre el checklist de entrega de la parada solo si hay una parada siguiente. */
+  /** Abre el checklist para cerrar el destino actual y dejar listo el siguiente. */
   const startFinalizarParada = (trip: Trip) => {
     const estado = getTripEstadoKey(trip.estado);
     if (estado !== "en progreso") {
-      Alert.alert("No disponible", "Solo puedes finalizar parada con el viaje en progreso.");
+      Alert.alert("No disponible", "Solo puedes finalizar un destino con el viaje en progreso.");
       return;
     }
-    const index = trip.destinoActualIndex ?? 0;
+    const index = getEffectiveDestinoIndex(trip);
     const total = getTotalDestinosCount(trip);
     if (index + 1 >= total) {
       Alert.alert(
-        "Sin más paradas",
+        "Sin más destinos",
         "Este es el último destino. Usa Finalizar viaje para completar el recorrido."
       );
       return;
@@ -1646,60 +1718,46 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
     openFinishChecklist(trip, "parada");
   };
 
-  const finalizarParada = async (
-    trip: Trip,
-    checklist?: ChecklistSaved,
-    recepcion?: ChecklistSaved
-  ) => {
+  const finalizarParada = async (trip: Trip, checklist?: ChecklistSaved) => {
     const estado = getTripEstadoKey(trip.estado);
     if (estado !== "en progreso") {
-      Alert.alert("No disponible", "Solo puedes finalizar parada con el viaje en progreso.");
+      Alert.alert("No disponible", "Solo puedes finalizar un destino con el viaje en progreso.");
       return;
     }
 
-    const index = trip.destinoActualIndex ?? 0;
+    const index = getEffectiveDestinoIndex(trip);
     const extras = normalizeDestinosExtrasList(trip.destinoExtra).map((item) => ({ ...item }));
     const total = getTotalDestinosCount(trip);
     const hasNext = index + 1 < total;
 
     if (!hasNext) {
       Alert.alert(
-        "Sin más paradas",
+        "Último destino",
         "Este es el último destino. Usa Finalizar viaje para completar el recorrido."
       );
       return;
     }
 
-    // Guarda el checklist de entrega (y recepción) de ESTA parada, con su índice y destino.
+    // Guarda el checklist de este destino (una sola vez).
     const stops = buildDeliveryStops(trip);
     const destinoParada = stops[index]?.destino || trip.destino || "";
     const checklistParada = checklist
-      ? { ...checklist, index, destino: destinoParada, recepcion: recepcion ?? null }
+      ? { ...checklist, index, destino: destinoParada, recepcion: null }
       : undefined;
 
-    if (index <= 0) {
-      await updateTripAsOperador(
-        trip,
-        {
-          estado: "en parada",
-          destinoActualIndex: 1,
-          ...(checklistParada ? { checklistParada } : {}),
-        },
-        "Parada finalizada."
-      );
-      return;
-    }
+    const nextIndex = index + 1;
+    const doneMsg = `Destino ${index + 1} finalizado. Ya puedes iniciar el Destino ${nextIndex + 1}.`;
 
     await updateTripAsOperador(
       trip,
       {
         estado: "en parada",
-        destinoActualIndex: index + 1,
+        destinoActualIndex: nextIndex,
         multidestino: true,
-        destinoExtra: buildDestinoExtraPayload(extras),
+        ...(index > 0 ? { destinoExtra: buildDestinoExtraPayload(extras) } : {}),
         ...(checklistParada ? { checklistParada } : {}),
       },
-      "Parada finalizada."
+      doneMsg
     );
   };
 
@@ -1710,7 +1768,16 @@ const parseDate = (dateStr: string) => combineDateTime(dateStr, "");
       return;
     }
 
-    const index = trip.destinoActualIndex ?? 0;
+    const index = getEffectiveDestinoIndex(trip);
+    const total = getTotalDestinosCount(trip);
+    const esMulti = Boolean(trip.multidestino) || total > 1;
+    if (esMulti && index < total - 1) {
+      Alert.alert(
+        "Aún hay destinos pendientes",
+        `Debes finalizar el destino ${index + 1} y continuar en orden hasta el destino ${total} antes de cerrar el viaje.`
+      );
+      return;
+    }
 
     // Solo cambia estado. Fecha/hora de llegada las captura quien edita el viaje (no el operador).
     await updateTripAsOperador(
@@ -1770,7 +1837,7 @@ const saveTrip = async () => {
       if (!extra.destino.trim() || !extra.unidadId || !extra.conductorId || !extra.fechaSalida) {
         notify(
           "Multidestino incompleto",
-          `Completa destino, unidad, operador y fecha de salida del destino adicional #${i + 1}.`
+          `Completa destino, unidad, operador y fecha de salida del Destino ${i + 2}.`
         );
         return;
       }
@@ -1779,7 +1846,7 @@ const saveTrip = async () => {
       if (s && l && l < s) {
         notify(
           "Fechas inválidas",
-          `En el destino adicional #${i + 1}, la llegada no puede ser anterior a la salida.`
+          `En el Destino ${i + 2}, la llegada no puede ser anterior a la salida.`
         );
         return;
       }
@@ -1795,12 +1862,8 @@ const saveTrip = async () => {
     acompanante: acompanante === "none" || acompanante === "" ? null : acompanante,
     def: def || "",
     tarjeta: tarjeta.trim(),
-    kilometrajeSalida: kmSalidaManual.trim()
-      ? [{ numero: Number(kmSalidaManual), descripcion: "" }]
-      : [],
-    kilometrajeLlegada: kmLlegadaManual.trim()
-      ? [{ numero: Number(kmLlegadaManual), descripcion: "" }]
-      : [],
+    kilometrajeSalida: [],
+    kilometrajeLlegada: [],
     multidestino: Boolean(multidestino),
   };
 
@@ -1834,12 +1897,8 @@ const saveTrip = async () => {
         conductorId: extra.conductorId,
         acompanante:
           extra.acompanante === "none" || extra.acompanante === "" ? null : extra.acompanante,
-        kilometrajeSalida: extra.kmSalida.trim()
-          ? [{ numero: Number(extra.kmSalida), descripcion: "" }]
-          : [],
-        kilometrajeLlegada: extra.kmLlegada.trim()
-          ? [{ numero: Number(extra.kmLlegada), descripcion: "" }]
-          : [],
+        kilometrajeSalida: [],
+        kilometrajeLlegada: [],
         fechaSalida: s ? s.toISOString() : null,
         fechaLlegada: l ? l.toISOString() : null,
       };
@@ -2015,8 +2074,6 @@ const renderDeleteConfirmModal = () => {
           Multidestino: t.multidestino ? "Sí" : "No",
           "Destinos extras": extras.map((d) => d.destino || "Sin nombre").join(" | "),
           Unidad: unit ? formatUnitLabel(unit) : t.unidadId || "",
-          "KM Salida": formatKmLabel(t.kilometrajeSalida),
-          "KM Llegada": formatKmLabel(t.kilometrajeLlegada),
           "DEF entregado": t.def?.trim() ? t.def.trim() : "",
           Tarjeta: t.tarjeta?.trim() ? t.tarjeta.trim() : "",
           "Checklist inicio": formatChecklistForExcel(t.checklistInicio),
@@ -2051,6 +2108,10 @@ const renderDeleteConfirmModal = () => {
       );
     } catch (error: any) {
       console.error("Error exportando Excel", error);
+      const msg = String(error?.message || error || "");
+      if (/abort|cancel|dismiss|sharing.*reject/i.test(msg)) {
+        return;
+      }
       if (error?.message === "sharing_unavailable") {
         Alert.alert("Error", "No se puede compartir el archivo en este dispositivo");
       } else {
@@ -2109,7 +2170,7 @@ const renderDeleteConfirmModal = () => {
 
   const openFinishChecklist = (
     trip: Trip,
-    mode: "final" | "parada" | "recepcion" | "recepcion-parada" = "final"
+    mode: "final" | "parada" | "recepcion" = "final"
   ) => {
     setFinishChecklistTrip(trip);
     setFinishMode(mode);
@@ -2122,7 +2183,6 @@ const renderDeleteConfirmModal = () => {
     setFinishMode("final");
     setFinishChecklistChecked(emptyFinishChecklistState());
     setFinishExtras("");
-    setPendingParadaEntrega(null);
   };
 
   const toggleFinishItem = (id: FinishChecklistId) => {
@@ -2139,23 +2199,12 @@ const renderDeleteConfirmModal = () => {
       finishExtras
     );
 
-    // Finalizar parada = 2 pasos: primero entrega, luego recepción de esa parada.
-    if (mode === "parada") {
-      setPendingParadaEntrega(payload);
-      setFinishMode("recepcion-parada");
-      setFinishChecklistChecked(emptyFinishChecklistState());
-      setFinishExtras("");
-      return;
-    }
-
-    if (mode === "recepcion-parada") {
-      const entrega = pendingParadaEntrega;
-      closeFinishChecklist();
-      await finalizarParada(tripToFinish, entrega ?? undefined, payload);
-      return;
-    }
-
     closeFinishChecklist();
+    if (mode === "parada") {
+      // Un solo checklist al finalizar destino (sin paso de recepción).
+      await finalizarParada(tripToFinish, payload);
+      return;
+    }
     if (mode === "recepcion") {
       await guardarRecepcion(tripToFinish, payload);
     } else {
@@ -2183,7 +2232,10 @@ const renderDeleteConfirmModal = () => {
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={styles.checklistTitle}>Checklist antes de iniciar</Text>
             <Text style={styles.checklistSubtitle} numberOfLines={2}>
-              {checklistTrip.rutaAcubrir} → {checklistTrip.destino}
+              {(() => {
+                const leg = getOperadorLegInfo(checklistTrip);
+                return `${leg.label}: ${leg.destino}`;
+              })()}
             </Text>
           </View>
           <Pressable style={styles.checklistClose} onPress={closeStartChecklist}>
@@ -2298,16 +2350,18 @@ const renderDeleteConfirmModal = () => {
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={styles.checklistTitle}>
-              {finishMode === "parada"
-                ? "Entrega de parada (1/2)"
-                : finishMode === "recepcion-parada"
-                ? "Recepción de parada (2/2)"
-                : finishMode === "recepcion"
-                ? "Checklist de recepción"
-                : "Checklist de entrega"}
+              {(() => {
+                const n = getDestinoNumero(finishChecklistTrip);
+                if (finishMode === "parada") return `Checklist destino ${n}`;
+                if (finishMode === "recepcion") return "Checklist de recepción";
+                return "Checklist de entrega";
+              })()}
             </Text>
             <Text style={styles.checklistSubtitle} numberOfLines={2}>
-              {finishChecklistTrip.rutaAcubrir} → {finishChecklistTrip.destino}
+              {(() => {
+                const leg = getOperadorLegInfo(finishChecklistTrip);
+                return `${leg.label}: ${leg.destino}`;
+              })()}
             </Text>
           </View>
           <Pressable style={styles.checklistClose} onPress={closeFinishChecklist}>
@@ -2316,8 +2370,10 @@ const renderDeleteConfirmModal = () => {
         </View>
 
         <Text style={styles.checklistIntro}>
-          {finishMode === "recepcion" || finishMode === "recepcion-parada"
+          {finishMode === "recepcion"
             ? "Marca lo que se recibió."
+            : finishMode === "parada"
+            ? "Marca lo entregado en este destino."
             : "Marca lo que se entregó."}
         </Text>
 
@@ -2358,7 +2414,7 @@ const renderDeleteConfirmModal = () => {
           <Text style={styles.finishExtrasLabel}>Extras</Text>
           <TextInput
             placeholder={
-              finishMode === "recepcion" || finishMode === "recepcion-parada"
+              finishMode === "recepcion"
                 ? "Escribe otros elementos recibidos…"
                 : "Escribe otros elementos entregados…"
             }
@@ -2397,8 +2453,6 @@ const renderDeleteConfirmModal = () => {
                 <FontAwesome5
                   name={
                     finishMode === "parada"
-                      ? "arrow-right"
-                      : finishMode === "recepcion-parada"
                       ? "map-marker-alt"
                       : finishMode === "recepcion"
                       ? "clipboard-check"
@@ -2409,9 +2463,13 @@ const renderDeleteConfirmModal = () => {
                 />
                 <Text style={styles.checklistConfirmText}>
                   {finishMode === "parada"
-                    ? "Siguiente: recepción"
-                    : finishMode === "recepcion-parada"
-                    ? "Finalizar parada"
+                    ? (() => {
+                        const n = getDestinoNumero(finishChecklistTrip);
+                        const total = getTotalDestinosCount(finishChecklistTrip);
+                        return n < total
+                          ? `Cerrar destino ${n} e ir al ${n + 1}`
+                          : "Cerrar este destino";
+                      })()
                     : finishMode === "recepcion"
                     ? "Guardar recepción"
                     : "Finalizar viaje"}
@@ -2488,12 +2546,37 @@ const renderDeleteConfirmModal = () => {
     }
 
     const canIniciar = estado === "pendiente" || estado === "en parada";
-    // "Finalizar parada" solo aplica a viajes multidestino (hay más de un destino).
+    // Multidestino: primero destino 1, luego 2… Solo en el último se puede finalizar el viaje.
     const esMultidestino =
       Boolean(liveTrip.multidestino) || getTotalDestinosCount(liveTrip) > 1;
-    const canParada = estado === "en progreso" && esMultidestino;
-    const canFinalizar = estado === "en progreso" || estado === "en parada";
-    const canRecepcion = estado === "en progreso" || estado === "en parada";
+    const totalDestinos = Math.max(1, getTotalDestinosCount(liveTrip));
+    const destinoIndex = getEffectiveDestinoIndex(liveTrip);
+    const destinoActualNum = destinoIndex + 1;
+    const esUltimoDestino = destinoActualNum >= totalDestinos || totalDestinos <= 1;
+    const tieneSiguienteDestino = !esUltimoDestino && destinoActualNum < totalDestinos;
+    // Nunca mostrar "Finalizar destino/parada" en el último destino (crítico en móvil).
+    const canParada = estado === "en progreso" && esMultidestino && tieneSiguienteDestino;
+    const canFinalizar =
+      estado === "en progreso" && (!esMultidestino || esUltimoDestino);
+    const canRecepcion = estado === "en progreso";
+    const legActual = getOperadorLegInfo(liveTrip, destinoIndex);
+    const ordenDestinos = (() => {
+      if (!esMultidestino) return "";
+      const stops = buildDeliveryStops(liveTrip);
+      return stops
+        .map((s, i) => `${i + 1}) ${s.destino}`)
+        .join(" → ");
+    })();
+    const iniciarLabel =
+      estado === "en parada"
+        ? `Continuar destino ${destinoActualNum}`
+        : esMultidestino
+          ? "Iniciar destino 1 (primero)"
+          : "Iniciar viaje";
+    const paradaLabel = `Finalizar destino ${destinoActualNum}`;
+    const paradaHint = tieneSiguienteDestino
+      ? `Cierra el ${destinoActualNum} y deja listo el ${destinoActualNum + 1}`
+      : undefined;
 
     if (estado === "completado") {
       return (
@@ -2512,6 +2595,25 @@ const renderDeleteConfirmModal = () => {
           compact && styles.operadorActionsRowCompact,
         ]}
       >
+        {esMultidestino ? (
+          <View style={styles.operadorDestinoProgressBox}>
+            <Text style={styles.operadorDestinoProgress}>
+              {estado === "en parada"
+                ? `Pausa · Siguiente acción: Destino ${destinoActualNum} de ${totalDestinos}`
+                : `En curso · Destino ${destinoActualNum} de ${totalDestinos}: ${legActual.destino}`}
+            </Text>
+            {ordenDestinos ? (
+              <Text style={styles.operadorDestinoOrden} numberOfLines={3}>
+                Orden: {ordenDestinos}
+              </Text>
+            ) : null}
+            {estado === "en progreso" && canParada ? (
+              <Text style={styles.operadorDestinoHint}>
+                Finalizar destino cierra el actual e inicia el siguiente en orden.
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
         {canIniciar && (
           <TouchableOpacity
             style={[styles.operadorActionBtn, styles.operadorActionPrimary, styles.operadorActionBtnFixed]}
@@ -2520,7 +2622,7 @@ const renderDeleteConfirmModal = () => {
             activeOpacity={0.85}
           >
             <FontAwesome5 name="play" size={13} color="#ffffff" />
-            <Text style={styles.operadorActionTextPrimary}>Iniciar viaje</Text>
+            <Text style={styles.operadorActionTextPrimary}>{iniciarLabel}</Text>
           </TouchableOpacity>
         )}
         {canParada && (
@@ -2531,7 +2633,12 @@ const renderDeleteConfirmModal = () => {
             activeOpacity={0.85}
           >
             <FontAwesome5 name="map-marker-alt" size={13} color="#111111" />
-            <Text style={styles.operadorActionText}>Finalizar parada</Text>
+            <View style={styles.operadorActionLabelStack}>
+              <Text style={styles.operadorActionText}>{paradaLabel}</Text>
+              {paradaHint ? (
+                <Text style={styles.operadorActionTextSub}>{paradaHint}</Text>
+              ) : null}
+            </View>
           </TouchableOpacity>
         )}
         {canRecepcion && (
@@ -2644,20 +2751,39 @@ const renderDeleteConfirmModal = () => {
 
               {item.multidestino && normalizeDestinosExtrasList(item.destinoExtra).length > 0 ? (
                 <View style={styles.mobileStopsChips}>
-                  <View style={styles.mobileStopChipMain}>
-                    <Text style={styles.mobileStopChipIndexLight}>1</Text>
-                    <Text style={styles.mobileStopChipTextLight} numberOfLines={1}>
-                      {item.destino || "Entrega"}
-                    </Text>
-                  </View>
-                  {normalizeDestinosExtrasList(item.destinoExtra).map((extra, i) => (
-                    <View key={`chip-${item.id}-${i}`} style={styles.mobileStopChip}>
-                      <Text style={styles.mobileStopChipIndex}>{i + 2}</Text>
-                      <Text style={styles.mobileStopChipText} numberOfLines={1}>
-                        {extra?.destino || `Punto ${i + 2}`}
-                      </Text>
-                    </View>
-                  ))}
+                  {(() => {
+                    const currentIdx = getEffectiveDestinoIndex(item);
+                    return (
+                      <>
+                        <View
+                          style={[
+                            styles.mobileStopChipMain,
+                            currentIdx === 0 && styles.mobileStopChipCurrent,
+                          ]}
+                        >
+                          <Text style={styles.mobileStopChipIndexLight}>1</Text>
+                          <Text style={styles.mobileStopChipTextLight} numberOfLines={1}>
+                            {item.destino || "Destino 1"}
+                          </Text>
+                        </View>
+                        {normalizeDestinosExtrasList(item.destinoExtra).map((extra, i) => {
+                          const num = i + 2;
+                          const active = currentIdx === i + 1;
+                          return (
+                            <View
+                              key={`chip-${item.id}-${i}`}
+                              style={[styles.mobileStopChip, active && styles.mobileStopChipCurrent]}
+                            >
+                              <Text style={styles.mobileStopChipIndex}>{num}</Text>
+                              <Text style={styles.mobileStopChipText} numberOfLines={1}>
+                                {extra?.destino || `Destino ${num}`}
+                              </Text>
+                            </View>
+                          );
+                        })}
+                      </>
+                    );
+                  })()}
                 </View>
               ) : null}
 
@@ -3475,7 +3601,9 @@ const renderDeleteConfirmModal = () => {
             onPress={() => {
               onChange(opt.next);
               if (opt.next) {
-                setDestinosExtras((prev) => (prev.length > 0 ? prev : [emptyDestinoExtra()]));
+                setDestinosExtras((prev) =>
+                  prev.length > 0 ? prev : [buildDestinoExtraFromMain()]
+                );
               } else {
                 setDestinosExtras([]);
                 setActivePicker(null);
@@ -3865,17 +3993,24 @@ const renderDeleteConfirmModal = () => {
                     </View>
                     {renderTravelTimeCard()}
                     {renderYesNoToggle("¿Multidestino?", multidestino, setMultidestino)}
+                    {multidestino ? (
+                      <Text style={styles.multidestinoHint}>
+                        Orden: Destino 1 primero, luego Destino 2, etc. Al finalizar un destino, el operador podrá iniciar el siguiente.
+                      </Text>
+                    ) : null}
                   </View>
                 )}
 
                 {multidestino &&
                   renderFormSection(
-                    "Destinos adicionales",
+                    "Destinos siguientes (en orden)",
                     <>
                       {destinosExtras.map((extra, index) => (
                         <View key={`destino-extra-${index}`} style={styles.destinoExtraCard}>
                           <View style={styles.destinoExtraHeader}>
-                            <Text style={styles.destinoExtraTitle}>Destino #{index + 1}</Text>
+                            <Text style={styles.destinoExtraTitle}>
+                              Destino {index + 2}
+                            </Text>
                             {destinosExtras.length > 1 && (
                               <TouchableOpacity
                                 style={styles.removeDestinoBtn}
@@ -3903,7 +4038,7 @@ const renderDeleteConfirmModal = () => {
                           )}
 
                           {renderModalField(
-                            "Destino",
+                            `Lugar del Destino ${index + 2}`,
                             <TextInput
                               value={extra.destino}
                               onChangeText={(v) => updateDestinoExtraAt(index, { destino: v })}
@@ -3912,6 +4047,9 @@ const renderDeleteConfirmModal = () => {
                             />
                           )}
 
+                          <Text style={styles.destinoExtraInheritedHint}>
+                            Unidad, operador y acompañante se toman del Destino 1 (mismo viaje). Puedes cambiarlos si hace falta.
+                          </Text>
                           {renderFieldRow(
                             <>
                               {renderFieldHalf(
@@ -3952,37 +4090,6 @@ const renderDeleteConfirmModal = () => {
                               .filter((u) => !isRemolqueUnitName(u.nombre))
                               .map((u) => ({ label: formatUnitLabel(u), value: u.id })),
                             "Seleccionar unidad"
-                          )}
-
-                          {renderFieldRow(
-                            <>
-                              {renderFieldHalf(
-                                renderModalField(
-                                  "KM Salida",
-                                  <TextInput
-                                    value={extra.kmSalida}
-                                    onChangeText={(v) => updateDestinoExtraAt(index, { kmSalida: v })}
-                                    placeholder="0"
-                                    keyboardType="numeric"
-                                    left={<TextInput.Icon icon="speedometer" />}
-                                    {...modalInputProps}
-                                  />
-                                )
-                              )}
-                              {renderFieldHalf(
-                                renderModalField(
-                                  "KM Llegada",
-                                  <TextInput
-                                    value={extra.kmLlegada}
-                                    onChangeText={(v) => updateDestinoExtraAt(index, { kmLlegada: v })}
-                                    placeholder="0"
-                                    keyboardType="numeric"
-                                    left={<TextInput.Icon icon="speedometer" />}
-                                    {...modalInputProps}
-                                  />
-                                )
-                              )}
-                            </>
                           )}
 
                           {renderTravelTimeCard(getTiempoExtra(extra))}
@@ -5046,6 +5153,47 @@ const styles = StyleSheet.create({
     width: "100%",
     gap: 10,
   },
+  operadorDestinoProgress: {
+    width: "100%",
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111827",
+    textAlign: "center",
+  },
+  operadorDestinoProgressBox: {
+    width: "100%",
+    marginBottom: 4,
+    backgroundColor: "#f3f4f6",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  operadorDestinoOrden: {
+    marginTop: 4,
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#4b5563",
+    textAlign: "center",
+    lineHeight: 16,
+  },
+  operadorDestinoHint: {
+    marginTop: 6,
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#6b7280",
+    textAlign: "center",
+    lineHeight: 15,
+  },
+  operadorActionLabelStack: {
+    flex: 1,
+    minWidth: 0,
+  },
+  operadorActionTextSub: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#6b7280",
+    marginTop: 1,
+  },
   operadorActionsRowCompact: {
     marginBottom: 4,
   },
@@ -5489,6 +5637,12 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 10,
     maxWidth: "100%",
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  mobileStopChipCurrent: {
+    borderColor: "#111111",
+    backgroundColor: "#e5e7eb",
   },
   mobileStopChipIndex: {
     fontSize: 11,
@@ -6247,6 +6401,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "800",
     color: "#111111",
+  },
+  multidestinoHint: {
+    marginTop: 8,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6b7280",
+    lineHeight: 18,
+  },
+  destinoExtraInheritedHint: {
+    marginTop: 2,
+    marginBottom: 10,
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#9ca3af",
+    lineHeight: 16,
   },
   removeDestinoBtn: {
     width: 32,

@@ -18,7 +18,6 @@ api.interceptors.request.use(
       }else{
         token=await AsyncStorage.getItem("token");
       }
-      console.log ("Token enviado",token);
       if (token){
         config.headers.Authorization= `Bearer ${token}`;
       }
