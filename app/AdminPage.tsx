@@ -1,6 +1,18 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useState } from "react";
-import { Alert, Modal, Platform, Pressable, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { TextInput, Portal } from "react-native-paper";
 import { api } from "../services/api";
 import { User } from "../types";
@@ -63,6 +75,7 @@ export default function AdminPage() {
         apellidoPaterno,
         apellidoMaterno,
         apellido: [apellidoPaterno, apellidoMaterno].filter(Boolean).join(" "),
+        activo: user.activo !== false,
       };
       setEditingUser(userForEdit);
       setInitialUserSnapshot({ ...userForEdit });
@@ -77,6 +90,7 @@ export default function AdminPage() {
         password: "",
         rol: "Operador",
         contacto: "",
+        activo: true,
         photoUrl: null,
       };
       setEditingUser(newUser as User);
@@ -90,38 +104,32 @@ export default function AdminPage() {
   const saveChanges = async () => {
     if (!editingUser || saving) return;
     setFormMessage("");
-    const { nombre, apellidoPaterno, apellidoMaterno, email, password, rol, photoUrl, contacto, _id } = editingUser;
+    const { nombre, apellidoPaterno, apellidoMaterno, email, password, rol, photoUrl, contacto, activo, _id } =
+      editingUser;
 
     const nombreTrim = nombre?.trim();
     const apellidoPaternoTrim = apellidoPaterno?.trim() || "";
     const apellidoMaternoTrim = apellidoMaterno?.trim() || "";
     const apellidoTrim = [apellidoPaternoTrim, apellidoMaternoTrim].filter(Boolean).join(" ");
     const contactoTrim = contacto?.trim();
+    const isActivo = activo !== false;
 
     if (!nombreTrim || !apellidoPaternoTrim || !rol) {
       setFormMessage("Nombre, apellido paterno y rol son obligatorios.");
       return;
     }
 
-    if (isAdding && !contactoTrim) {
-      setFormMessage("El contacto es obligatorio.");
-      return;
-    }
-
-    if (!isAdding && rol === "Admin" && !email?.trim()) {
-      setFormMessage("El correo es obligatorio para administradores.");
-      return;
-    }
-
     setSaving(true);
     try {
       if (isAdding) {
-        if (!email?.trim() || !password?.trim()) {
-          setFormMessage("Correo y contraseña son obligatorios para que el usuario pueda iniciar sesión.");
+        const emailTrim = email?.trim() || "";
+        const passwordTrim = password?.trim() || "";
+        if ((emailTrim && !passwordTrim) || (!emailTrim && passwordTrim)) {
+          setFormMessage("Si das acceso, llena correo y contraseña juntos.");
           setSaving(false);
           return;
         }
-        if (password.trim().length < 6) {
+        if (passwordTrim && passwordTrim.length < 6) {
           setFormMessage("La contraseña debe tener al menos 6 caracteres.");
           setSaving(false);
           return;
@@ -131,15 +139,16 @@ export default function AdminPage() {
           apellido: apellidoTrim,
           apellidoPaterno: apellidoPaternoTrim,
           apellidoMaterno: apellidoMaternoTrim,
-          email: email.trim().toLowerCase(),
-          password: password.trim(),
           rol,
-          contacto: contactoTrim,
-          photoUrl,
+          activo: isActivo,
+          ...(contactoTrim ? { contacto: contactoTrim } : {}),
+          ...(emailTrim ? { email: emailTrim.toLowerCase() } : {}),
+          ...(passwordTrim ? { password: passwordTrim } : {}),
+          ...(photoUrl ? { photoUrl } : {}),
         });
         notify("Éxito", "Usuario creado correctamente");
       } else {
-        const changedFields: Partial<User> = {};
+        const changedFields: Partial<User> & { activo?: boolean } = {};
         if (nombreTrim !== initialUserSnapshot.nombre?.trim()) changedFields.nombre = nombreTrim;
         if (
           apellidoPaternoTrim !== (initialUserSnapshot.apellidoPaterno?.trim() || "") ||
@@ -156,6 +165,9 @@ export default function AdminPage() {
           changedFields.contacto = contactoTrim;
         }
         if (rol !== initialUserSnapshot.rol) changedFields.rol = rol;
+        if (isActivo !== (initialUserSnapshot.activo !== false)) {
+          changedFields.activo = isActivo;
+        }
 
         if (password?.trim()) {
           if (password.trim().length < 6) {
@@ -202,22 +214,37 @@ export default function AdminPage() {
       setSaving(false);
     }
   };
-  // Modal propio: Alert.alert / window.confirm fallan o no se ven bien en Expo web/móvil
-  const deleteUser = (id: string) => {
+  // Soft-delete: desactivar (no borra de la BD)
+  const requestDeactivate = (id: string) => {
     setDeleteConfirmId(String(id));
   };
 
-  const proceedDeleteUser = async () => {
+  const proceedDeactivateUser = async () => {
     const id = deleteConfirmId;
     if (!id) return;
     setDeleteConfirmId(null);
     try {
       await api.delete(`/users/${id}`);
-      setUsers((prevUsers) => prevUsers.filter((u) => u._id !== id));
-      notify("Listo", "Usuario eliminado correctamente.");
+      setUsers((prevUsers) =>
+        prevUsers.map((u) => (u._id === id ? { ...u, activo: false } : u))
+      );
+      notify("Listo", "Usuario desactivado. Ya no aparecerá en asignaciones de viajes.");
     } catch (error: any) {
-      console.error("Error eliminando usuario", error);
-      notify("Error", "No se pudo eliminar el usuario.");
+      console.error("Error desactivando usuario", error);
+      notify("Error", "No se pudo desactivar el usuario.");
+    }
+  };
+
+  const reactivateUser = async (id: string) => {
+    try {
+      await api.patch(`/users/${id}`, { activo: true });
+      setUsers((prevUsers) =>
+        prevUsers.map((u) => (u._id === id ? { ...u, activo: true } : u))
+      );
+      notify("Listo", "Usuario reactivado.");
+    } catch (error: any) {
+      console.error("Error reactivando usuario", error);
+      notify("Error", "No se pudo reactivar el usuario.");
     }
   };
 
@@ -231,12 +258,12 @@ export default function AdminPage() {
         style={[styles.confirmCard, isMobile && styles.confirmCardMobile]}
         {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
       >
-        <View style={styles.confirmIconBadge}>
-          <FontAwesome5 name="trash-alt" size={18} color="#ffffff" />
+        <View style={[styles.confirmIconBadge, styles.confirmIconBadgeWarn]}>
+          <FontAwesome5 name="user-slash" size={18} color="#ffffff" />
         </View>
-        <Text style={styles.confirmTitle}>Eliminar usuario</Text>
+        <Text style={styles.confirmTitle}>Desactivar usuario</Text>
         <Text style={styles.confirmMessage}>
-          ¿Estás seguro de que deseas eliminar este usuario? Esta acción no se puede deshacer.
+          El usuario dejará de aparecer en Operador y Acompañante de Viajes, pero no se borrará de la base de datos. Puedes reactivarlo después.
         </Text>
         <View style={styles.confirmActions}>
           <TouchableOpacity
@@ -249,11 +276,11 @@ export default function AdminPage() {
           <TouchableOpacity
             style={styles.confirmDeleteBtn}
             onPress={() => {
-              void proceedDeleteUser();
+              void proceedDeactivateUser();
             }}
             activeOpacity={0.85}
           >
-            <Text style={styles.confirmDeleteText}>Eliminar</Text>
+            <Text style={styles.confirmDeleteText}>Desactivar</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -277,22 +304,31 @@ export default function AdminPage() {
     );
   };
   const getContactLine = (item: User) => {
-    if (item.email) return { icon: "envelope" as const, text: item.email };
     if (item.contacto?.trim()) return { icon: "phone" as const, text: item.contacto };
-    return { icon: "info-circle" as const, text: "Sin contacto registrado" };
+    if (item.email) return { icon: "envelope" as const, text: item.email };
+    return { icon: "info-circle" as const, text: "Sin teléfono ni correo" };
   };
 
+  const roleLabel = (rol?: string) => {
+    if (rol === "Admin") return "Administrador";
+    if (rol === "Ayudante General") return "Ayudante General";
+    return rol || "—";
+  };
+
+  const isUserActive = (u: Pick<User, "activo">) => u.activo !== false;
+
   const getInitials = (item: User) =>
-    `${item.nombre?.[0] || ""}${item.apellido?.[0] || ""}`.toUpperCase() || "U";
+    `${item.nombre?.[0] || ""}${item.apellido?.[0] || item.apellidoPaterno?.[0] || ""}`.toUpperCase() || "U";
 
   const renderItem = ({ item }: { item: User }) => {
     const contact = getContactLine(item);
     const isAdmin = item.rol === "Admin";
+    const active = isUserActive(item);
 
     return (
-      <View style={styles.userCard}>
+      <View style={[styles.userCard, !active && styles.userCardInactive]}>
         <View style={styles.userCardMain}>
-          <View style={styles.avatar}>
+          <View style={[styles.avatar, !active && styles.avatarInactive]}>
             <Text style={styles.avatarText}>{getInitials(item)}</Text>
           </View>
 
@@ -303,19 +339,30 @@ export default function AdminPage() {
               </Text>
               <View style={[styles.roleBadge, isAdmin ? styles.roleBadgeAdmin : styles.roleBadgeOperador]}>
                 <FontAwesome5
-                  name={isAdmin ? "user-shield" : "truck"}
+                  name={
+                    isAdmin ? "user-shield" : item.rol === "Ayudante General" ? "user-friends" : "truck"
+                  }
                   size={10}
                   color={isAdmin ? "#ffffff" : "#111111"}
                 />
-                <Text style={[styles.roleBadgeText, isAdmin && styles.roleBadgeTextAdmin]}>{item.rol}</Text>
+                <Text style={[styles.roleBadgeText, isAdmin && styles.roleBadgeTextAdmin]}>
+                  {roleLabel(item.rol)}
+                </Text>
               </View>
             </View>
 
-            <View style={styles.contactRow}>
-              <FontAwesome5 name={contact.icon} size={12} color="#9ca3af" />
-              <Text style={[styles.contactText, contact.text.includes("Sin") && styles.contactMuted]} numberOfLines={1}>
-                {contact.text}
-              </Text>
+            <View style={styles.metaRow}>
+              <View style={[styles.statusBadge, active ? styles.statusBadgeActive : styles.statusBadgeInactive]}>
+                <Text style={[styles.statusBadgeText, active ? styles.statusBadgeTextActive : styles.statusBadgeTextInactive]}>
+                  {active ? "Activo" : "Inactivo"}
+                </Text>
+              </View>
+              <View style={styles.contactRow}>
+                <FontAwesome5 name={contact.icon} size={12} color="#9ca3af" />
+                <Text style={[styles.contactText, contact.text.includes("Sin") && styles.contactMuted]} numberOfLines={1}>
+                  {contact.text}
+                </Text>
+              </View>
             </View>
           </View>
         </View>
@@ -324,9 +371,23 @@ export default function AdminPage() {
           <TouchableOpacity style={styles.iconAction} onPress={() => handleEdit(item)} activeOpacity={0.85}>
             <FontAwesome5 name="pen" size={13} color="#111111" />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.iconAction, styles.iconActionDanger]} onPress={() => deleteUser(item._id)} activeOpacity={0.85}>
-            <FontAwesome5 name="trash-alt" size={13} color="#dc2626" />
-          </TouchableOpacity>
+          {active ? (
+            <TouchableOpacity
+              style={[styles.iconAction, styles.iconActionDanger]}
+              onPress={() => requestDeactivate(item._id)}
+              activeOpacity={0.85}
+            >
+              <FontAwesome5 name="user-slash" size={13} color="#dc2626" />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[styles.iconAction, styles.iconActionOk]}
+              onPress={() => void reactivateUser(item._id)}
+              activeOpacity={0.85}
+            >
+              <FontAwesome5 name="user-check" size={13} color="#059669" />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     );
@@ -335,17 +396,11 @@ export default function AdminPage() {
   const showCredentials = true;
   const showContacto = true;
 
-  const roleOptions: { value: User["rol"]; label: string; icon: string }[] = isAdding
-    ? [
-        { value: "Operador", label: "Operador", icon: "truck" },
-        { value: "Ayudante General", label: "Ayudante", icon: "user-friends" },
-        { value: "Admin", label: "Admin", icon: "user-shield" },
-      ]
-    : [
-        { value: "Admin", label: "Admin", icon: "user-shield" },
-        { value: "Operador", label: "Operador", icon: "truck" },
-        { value: "Ayudante General", label: "Ayudante", icon: "user-friends" },
-      ];
+  const roleOptions: { value: User["rol"]; label: string; icon: string }[] = [
+    { value: "Admin", label: "Administrador", icon: "user-shield" },
+    { value: "Operador", label: "Operador", icon: "truck" },
+    { value: "Ayudante General", label: "Ayudante General", icon: "user-friends" },
+  ];
 
   const inputProps = {
     mode: "flat" as const,
@@ -368,164 +423,200 @@ export default function AdminPage() {
   );
 
   const renderModalContent = () => (
-    <View
-      style={styles.modalContent}
-      onStartShouldSetResponder={() => true}
-      {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      style={styles.modalKeyboardWrap}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 24 : 0}
     >
-      <View style={styles.modalHeader}>
-        <View style={styles.modalHeaderLeft}>
-          <View style={styles.modalIconBadge}>
-            <FontAwesome5 name={isAdding ? "user-plus" : "user-edit"} size={16} color="#ffffff" />
+      <View
+        style={[styles.modalContent, isMobile && styles.modalContentMobile]}
+        onStartShouldSetResponder={() => true}
+        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
+      >
+        <View style={styles.modalHeader}>
+          <View style={styles.modalHeaderLeft}>
+            <View style={styles.modalIconBadge}>
+              <FontAwesome5 name={isAdding ? "user-plus" : "user-edit"} size={16} color="#ffffff" />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.modalTitle}>{isAdding ? "Agregar Usuario" : "Editar Usuario"}</Text>
+              <Text style={styles.modalSubtitle}>
+                {isAdding
+                  ? "Catálogo de personal. Correo y contraseña opcionales (solo si iniciará sesión)"
+                  : "Actualiza la información del usuario"}
+              </Text>
+            </View>
           </View>
-          <View>
-            <Text style={styles.modalTitle}>{isAdding ? "Agregar Usuario" : "Editar Usuario"}</Text>
-            <Text style={styles.modalSubtitle}>
-              {isAdding
-                ? "Completa los datos. Correo y contraseña permiten el acceso a la app"
-                : "Actualiza la información del usuario"}
-            </Text>
-          </View>
+          <TouchableOpacity style={styles.modalCloseButton} onPress={closeModal} disabled={saving} activeOpacity={0.85}>
+            <FontAwesome5 name="times" size={14} color="#6b7280" />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.modalCloseButton} onPress={closeModal} disabled={saving} activeOpacity={0.85}>
-          <FontAwesome5 name="times" size={14} color="#6b7280" />
-        </TouchableOpacity>
-      </View>
 
-      <View style={styles.modalBody}>
-        <View style={styles.fieldGroup}>
-          {renderField("Nombre", (
+        <ScrollView
+          style={styles.modalBodyScroll}
+          contentContainerStyle={styles.modalBody}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator
+          nestedScrollEnabled
+          bounces
+        >
+          <View style={styles.fieldGroup}>
+            {renderField("Nombre(s)", (
+              <TextInput
+                placeholder="Nombre(s)"
+                value={editingUser?.nombre ?? ""}
+                onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, nombre: text })}
+                {...inputProps}
+              />
+            ))}
+          </View>
+
+          <View style={styles.fieldRow}>
+            <View style={styles.fieldHalf}>
+              {renderField("Apellido paterno", (
+                <TextInput
+                  placeholder="Apellido paterno"
+                  value={editingUser?.apellidoPaterno ?? ""}
+                  onChangeText={(text) =>
+                    editingUser &&
+                    setEditingUser({
+                      ...editingUser,
+                      apellidoPaterno: text,
+                      apellido: [text, editingUser.apellidoMaterno].filter(Boolean).join(" ").trim(),
+                    })
+                  }
+                  {...inputProps}
+                />
+              ))}
+            </View>
+            <View style={styles.fieldHalf}>
+              {renderField("Apellido materno", (
+                <TextInput
+                  placeholder="Apellido materno"
+                  value={editingUser?.apellidoMaterno ?? ""}
+                  onChangeText={(text) =>
+                    editingUser &&
+                    setEditingUser({
+                      ...editingUser,
+                      apellidoMaterno: text,
+                      apellido: [editingUser.apellidoPaterno, text].filter(Boolean).join(" ").trim(),
+                    })
+                  }
+                  {...inputProps}
+                />
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>Rol</Text>
+            <View style={styles.roleSelector}>
+              {roleOptions.map((item) => {
+                const isActive = editingUser?.rol === item.value;
+                return (
+                  <TouchableOpacity
+                    key={item.value}
+                    style={[styles.rolePill, isActive && styles.rolePillActive]}
+                    onPress={() => editingUser && setEditingUser({ ...editingUser, rol: item.value })}
+                    activeOpacity={0.85}
+                  >
+                    <FontAwesome5 name={item.icon as any} size={12} color={isActive ? "#ffffff" : "#6b7280"} />
+                    <Text style={[styles.rolePillText, isActive && styles.rolePillTextActive]}>{item.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>Estado</Text>
+            <View style={styles.roleSelector}>
+              {[
+                { value: true, label: "Activo", icon: "check-circle" },
+                { value: false, label: "Inactivo", icon: "ban" },
+              ].map((opt) => {
+                const isActive = (editingUser?.activo !== false) === opt.value;
+                return (
+                  <TouchableOpacity
+                    key={String(opt.value)}
+                    style={[styles.rolePill, isActive && styles.rolePillActive]}
+                    onPress={() => editingUser && setEditingUser({ ...editingUser, activo: opt.value })}
+                    activeOpacity={0.85}
+                  >
+                    <FontAwesome5 name={opt.icon as any} size={12} color={isActive ? "#ffffff" : "#6b7280"} />
+                    <Text style={[styles.rolePillText, isActive && styles.rolePillTextActive]}>{opt.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          {showContacto && renderField("Teléfono", (
             <TextInput
-              placeholder="Nombre"
-              value={editingUser?.nombre ?? ""}
-              onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, nombre: text })}
+              placeholder="Teléfono (opcional)"
+              value={editingUser?.contacto ?? ""}
+              onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, contacto: text })}
+              keyboardType="phone-pad"
               {...inputProps}
             />
           ))}
+
+          {showCredentials && (
+            <>
+              {renderField("Correo (opcional)", (
+                <TextInput
+                  placeholder="correo@empresa.com — solo si inicia sesión"
+                  value={editingUser?.email ?? ""}
+                  onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, email: text })}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  {...inputProps}
+                />
+              ))}
+              {renderField("Contraseña (opcional)", (
+                <TextInput
+                  placeholder={isAdding ? "Mín. 6 caracteres si da acceso" : "Nueva contraseña (opcional)"}
+                  value={editingUser?.password ?? ""}
+                  onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, password: text })}
+                  secureTextEntry
+                  autoComplete="new-password"
+                  textContentType="newPassword"
+                  importantForAutofill="no"
+                  {...inputProps}
+                />
+              ))}
+            </>
+          )}
+
+          {formMessage ? (
+            <View style={styles.formMessageBoxInline}>
+              <FontAwesome5 name="exclamation-circle" size={14} color="#dc2626" />
+              <Text style={styles.formMessage}>{formMessage}</Text>
+            </View>
+          ) : null}
+        </ScrollView>
+
+        <View style={[styles.modalActions, isMobile && styles.modalActionsMobile]}>
+          <TouchableOpacity style={styles.cancelButton} onPress={closeModal} disabled={saving} activeOpacity={0.85}>
+            <Text style={styles.cancelButtonText}>Cancelar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+            onPress={saveChanges}
+            disabled={saving}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.saveButtonText}>{saving ? "Guardando..." : "Guardar"}</Text>
+          </TouchableOpacity>
         </View>
-
-        <View style={styles.fieldRow}>
-          <View style={styles.fieldHalf}>
-            {renderField("Apellido paterno", (
-              <TextInput
-                placeholder="Apellido paterno"
-                value={editingUser?.apellidoPaterno ?? ""}
-                onChangeText={(text) =>
-                  editingUser &&
-                  setEditingUser({
-                    ...editingUser,
-                    apellidoPaterno: text,
-                    apellido: [text, editingUser.apellidoMaterno].filter(Boolean).join(" ").trim(),
-                  })
-                }
-                {...inputProps}
-              />
-            ))}
-          </View>
-          <View style={styles.fieldHalf}>
-            {renderField("Apellido materno", (
-              <TextInput
-                placeholder="Apellido materno"
-                value={editingUser?.apellidoMaterno ?? ""}
-                onChangeText={(text) =>
-                  editingUser &&
-                  setEditingUser({
-                    ...editingUser,
-                    apellidoMaterno: text,
-                    apellido: [editingUser.apellidoPaterno, text].filter(Boolean).join(" ").trim(),
-                  })
-                }
-                {...inputProps}
-              />
-            ))}
-          </View>
-        </View>
-
-        <View style={styles.fieldGroup}>
-          <Text style={styles.fieldLabel}>Rol</Text>
-          <View style={styles.roleSelector}>
-            {roleOptions.map((item) => {
-              const isActive = editingUser?.rol === item.value;
-              return (
-                <TouchableOpacity
-                  key={item.value}
-                  style={[styles.rolePill, isActive && styles.rolePillActive]}
-                  onPress={() => editingUser && setEditingUser({ ...editingUser, rol: item.value })}
-                  activeOpacity={0.85}
-                >
-                  <FontAwesome5 name={item.icon as any} size={12} color={isActive ? "#ffffff" : "#6b7280"} />
-                  <Text style={[styles.rolePillText, isActive && styles.rolePillTextActive]}>{item.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
-        {showContacto && renderField("Contacto", (
-          <TextInput
-            placeholder={isAdding ? "Teléfono obligatorio" : "Teléfono de contacto"}
-            value={editingUser?.contacto ?? ""}
-            onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, contacto: text })}
-            keyboardType="phone-pad"
-            {...inputProps}
-          />
-        ))}
-
-        {showCredentials && (
-          <>
-            {renderField("Correo", (
-              <TextInput
-                placeholder="correo@empresa.com"
-                value={editingUser?.email ?? ""}
-                onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, email: text })}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                {...inputProps}
-              />
-            ))}
-            {renderField("Contraseña", (
-              <TextInput
-                placeholder={isAdding ? "Contraseña (mín. 6 caracteres)" : "Nueva contraseña (opcional)"}
-                value={editingUser?.password ?? ""}
-                onChangeText={(text) => editingUser && setEditingUser({ ...editingUser, password: text })}
-                secureTextEntry
-                autoComplete="new-password"
-                textContentType="newPassword"
-                importantForAutofill="no"
-                {...inputProps}
-              />
-            ))}
-          </>
-        )}
       </View>
-
-      {formMessage ? (
-        <View style={styles.formMessageBox}>
-          <FontAwesome5 name="exclamation-circle" size={14} color="#dc2626" />
-          <Text style={styles.formMessage}>{formMessage}</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.modalActions}>
-        <TouchableOpacity style={styles.cancelButton} onPress={closeModal} disabled={saving} activeOpacity={0.85}>
-          <Text style={styles.cancelButtonText}>Cancelar</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-          onPress={saveChanges}
-          disabled={saving}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.saveButtonText}>{saving ? "Guardando..." : "Guardar"}</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 
   const renderWebModal = () => (
     <Portal>
       <View
-        style={styles.webModalOverlay}
+        style={[styles.webModalOverlay, isMobile && styles.webModalOverlayMobile]}
         {...(Platform.OS === "web" ? { onClick: closeModal } : {})}
       >
         {renderModalContent()}
@@ -537,8 +628,8 @@ export default function AdminPage() {
     <View style={styles.container}>
       <View style={styles.pageHeader}>
         <View style={styles.pageHeaderText}>
-          <Text style={[styles.title, isMobile && styles.titleMobile]}>Usuarios Registrados</Text>
-          <Text style={styles.subtitle}>Gestiona el equipo y los accesos de Volta</Text>
+          <Text style={[styles.title, isMobile && styles.titleMobile]}>Catálogo de usuarios</Text>
+          <Text style={styles.subtitle}>Personal para asignar a viajes. Desactivar no borra el registro.</Text>
         </View>
         {!listLoading && !loadError && !isMobile && (
           <View style={styles.countBadge}>
@@ -597,7 +688,7 @@ export default function AdminPage() {
         renderWebModal()
       ) : (
         <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={closeModal}>
-          <View style={styles.modalContainer}>
+          <View style={[styles.modalContainer, isMobile && styles.modalContainerMobile]}>
             {renderModalContent()}
           </View>
         </Modal>
@@ -662,6 +753,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 4,
+  },
+  confirmIconBadgeWarn: {
+    backgroundColor: "#b45309",
   },
   confirmTitle: {
     fontSize: 18,
@@ -841,9 +935,27 @@ const styles = StyleSheet.create({
   roleBadgeOperador: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#d1d5db" },
   roleBadgeText: { fontSize: 11, fontWeight: "700", color: "#111111" },
   roleBadgeTextAdmin: { color: "#ffffff" },
-  contactRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  contactRow: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
   contactText: { fontSize: 13, color: "#4b5563", flex: 1 },
   contactMuted: { color: "#9ca3af", fontStyle: "italic" },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 4,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  statusBadgeActive: { backgroundColor: "#ecfdf5" },
+  statusBadgeInactive: { backgroundColor: "#f3f4f6" },
+  statusBadgeText: { fontSize: 11, fontWeight: "700" },
+  statusBadgeTextActive: { color: "#059669" },
+  statusBadgeTextInactive: { color: "#6b7280" },
+  userCardInactive: { opacity: 0.78 },
+  avatarInactive: { backgroundColor: "#9ca3af" },
   actions: { flexDirection: "row", gap: 8 },
   iconAction: {
     width: 36,
@@ -860,6 +972,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#fef2f2",
     borderColor: "#fecaca",
   },
+  iconActionOk: {
+    backgroundColor: "#ecfdf5",
+    borderColor: "#a7f3d0",
+  },
   webModalOverlay: {
     position: "fixed" as any,
     top: 0,
@@ -873,9 +989,25 @@ const styles = StyleSheet.create({
     padding: 20,
     ...(Platform.OS === "web" ? { cursor: "default" as const } : {}),
   },
+  webModalOverlayMobile: {
+    justifyContent: "flex-end",
+    alignItems: "stretch",
+    padding: 0,
+    paddingTop: 40,
+  },
   modalContainer: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)" },
+  modalContainerMobile: {
+    justifyContent: "flex-end",
+    paddingTop: 40,
+  },
+  modalKeyboardWrap: {
+    width: "100%",
+    maxWidth: Platform.OS === "web" ? 460 : undefined,
+    alignItems: "center",
+  },
   modalContent: {
     width: Platform.OS === "web" ? 460 : "92%",
+    maxHeight: "90%",
     backgroundColor: "#ffffff",
     padding: 0,
     borderRadius: 16,
@@ -885,6 +1017,12 @@ const styles = StyleSheet.create({
     ...(Platform.OS === "web"
       ? { boxShadow: "0 20px 50px rgba(0,0,0,0.18)" as any }
       : {}),
+  },
+  modalContentMobile: {
+    width: "100%",
+    maxHeight: "92%",
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
   },
   modalHeader: {
     flexDirection: "row",
@@ -922,10 +1060,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
+  modalBodyScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
+  },
   modalBody: {
     paddingHorizontal: 22,
     paddingTop: 18,
-    paddingBottom: 8,
+    paddingBottom: 20,
   },
   fieldRow: {
     flexDirection: "row",
@@ -986,6 +1128,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#fecaca",
   },
+  formMessageBoxInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 4,
+    marginBottom: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: "#fef2f2",
+    borderWidth: 1,
+    borderColor: "#fecaca",
+  },
   formMessage: {
     flex: 1,
     color: "#dc2626",
@@ -1001,6 +1156,10 @@ const styles = StyleSheet.create({
     paddingBottom: 22,
     borderTopWidth: 1,
     borderTopColor: "#f3f4f6",
+    backgroundColor: "#ffffff",
+  },
+  modalActionsMobile: {
+    paddingBottom: 28,
   },
   cancelButton: {
     flex: 1,

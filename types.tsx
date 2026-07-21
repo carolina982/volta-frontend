@@ -11,6 +11,8 @@ export interface User {
     email:string ;
     password?:string ;
     rol :"Admin" |"Operador" | "Ayudante General";
+    /** false = desactivado (sigue en catálogo, no se asigna a viajes). */
+    activo?: boolean;
     photoUrl?:string |null;
 }
 

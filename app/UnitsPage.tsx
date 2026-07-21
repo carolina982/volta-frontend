@@ -146,9 +146,10 @@ export default function UnitsPage({ currentUser }: UnitsPageProps) {
 
   const loadOperadores = async () => {
     try {
-      const res = await api.get("/users");
+      const res = await api.get("/users", { params: { activo: true } });
       const ops = (res.data as any[])
         .filter((u) => {
+          if (u.activo === false) return false;
           const r = String(u.rol || "").toLowerCase();
           return r.includes("operador") || r.includes("ayudante");
         })

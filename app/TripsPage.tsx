@@ -144,7 +144,7 @@ interface Unit {
   placaRemolque?: string;
   imagenUrl?: string;
 }
-interface User { id: string; nombre: string; apellido?: string; rol?: string }
+interface User { id: string; nombre: string; apellido?: string; rol?: string; activo?: boolean }
 
 const UNIDADES_CON_REMOLQUE = ["002", "007"];
 
@@ -740,13 +740,18 @@ export default function TripsPage() {
   }, [myUserId]);
 
   const operadores = useMemo(
-    () => users.filter((u) => (u.rol || "").toLowerCase() === "operador"),
+    () =>
+      users.filter((u) => {
+        if (u.activo === false) return false;
+        return (u.rol || "").toLowerCase() === "operador";
+      }),
     [users]
   );
 
   const acompanantesOptions = useMemo(
     () =>
       users.filter((u) => {
+        if (u.activo === false) return false;
         const r = (u.rol || "").toLowerCase();
         return r === "operador" || r === "ayudante general" || r === "ayudante" || r === "chofer";
       }),
@@ -896,8 +901,8 @@ export default function TripsPage() {
 
   const loadUsers = useCallback(async () => {
     try {
-      const res = await api.get("/users");
-      setUsers(res.data.map((u: any) => ({ ...u, id: u._id })));
+      const res = await api.get("/users", { params: { activo: true } });
+      setUsers(res.data.map((u: any) => ({ ...u, id: u._id, activo: u.activo !== false })));
     } catch (error) {
       console.error("Error cargando usuarios:", error);
     }
