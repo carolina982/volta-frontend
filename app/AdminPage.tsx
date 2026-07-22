@@ -29,7 +29,7 @@ export default function AdminPage() {
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [formMessage, setFormMessage] = useState("");
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
 
   const notify = (title: string, message: string) => {
     if (Platform.OS === "web") {
@@ -214,95 +214,7 @@ export default function AdminPage() {
       setSaving(false);
     }
   };
-  // Soft-delete: desactivar (no borra de la BD)
-  const requestDeactivate = (id: string) => {
-    setDeleteConfirmId(String(id));
-  };
 
-  const proceedDeactivateUser = async () => {
-    const id = deleteConfirmId;
-    if (!id) return;
-    setDeleteConfirmId(null);
-    try {
-      await api.delete(`/users/${id}`);
-      setUsers((prevUsers) =>
-        prevUsers.map((u) => (u._id === id ? { ...u, activo: false } : u))
-      );
-      notify("Listo", "Usuario desactivado. Ya no aparecerá en asignaciones de viajes.");
-    } catch (error: any) {
-      console.error("Error desactivando usuario", error);
-      notify("Error", "No se pudo desactivar el usuario.");
-    }
-  };
-
-  const reactivateUser = async (id: string) => {
-    try {
-      await api.patch(`/users/${id}`, { activo: true });
-      setUsers((prevUsers) =>
-        prevUsers.map((u) => (u._id === id ? { ...u, activo: true } : u))
-      );
-      notify("Listo", "Usuario reactivado.");
-    } catch (error: any) {
-      console.error("Error reactivando usuario", error);
-      notify("Error", "No se pudo reactivar el usuario.");
-    }
-  };
-
-  const closeDeleteConfirm = () => setDeleteConfirmId(null);
-
-  const renderDeleteConfirmModal = () => {
-    if (!deleteConfirmId) return null;
-
-    const card = (
-      <View
-        style={[styles.confirmCard, isMobile && styles.confirmCardMobile]}
-        {...(Platform.OS === "web" ? { onClick: (e: any) => e.stopPropagation() } : {})}
-      >
-        <View style={[styles.confirmIconBadge, styles.confirmIconBadgeWarn]}>
-          <FontAwesome5 name="user-slash" size={18} color="#ffffff" />
-        </View>
-        <Text style={styles.confirmTitle}>Desactivar usuario</Text>
-        <Text style={styles.confirmMessage}>
-          El usuario dejará de aparecer en Operador y Acompañante de Viajes, pero no se borrará de la base de datos. Puedes reactivarlo después.
-        </Text>
-        <View style={styles.confirmActions}>
-          <TouchableOpacity
-            style={styles.confirmCancelBtn}
-            onPress={closeDeleteConfirm}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.confirmCancelText}>Cancelar</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.confirmDeleteBtn}
-            onPress={() => {
-              void proceedDeactivateUser();
-            }}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.confirmDeleteText}>Desactivar</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-
-    const overlay = (
-      <View style={[styles.confirmOverlay, styles.confirmOverlayWeb]} pointerEvents="box-none">
-        <Pressable style={styles.confirmBackdrop} onPress={closeDeleteConfirm} />
-        {card}
-      </View>
-    );
-
-    if (Platform.OS === "web") {
-      return <Portal>{overlay}</Portal>;
-    }
-
-    return (
-      <Modal visible transparent animationType="fade" onRequestClose={closeDeleteConfirm}>
-        {overlay}
-      </Modal>
-    );
-  };
   const getContactLine = (item: User) => {
     if (item.contacto?.trim()) return { icon: "phone" as const, text: item.contacto };
     if (item.email) return { icon: "envelope" as const, text: item.email };
@@ -371,23 +283,6 @@ export default function AdminPage() {
           <TouchableOpacity style={styles.iconAction} onPress={() => handleEdit(item)} activeOpacity={0.85}>
             <FontAwesome5 name="pen" size={13} color="#111111" />
           </TouchableOpacity>
-          {active ? (
-            <TouchableOpacity
-              style={[styles.iconAction, styles.iconActionDanger]}
-              onPress={() => requestDeactivate(item._id)}
-              activeOpacity={0.85}
-            >
-              <FontAwesome5 name="user-slash" size={13} color="#dc2626" />
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={[styles.iconAction, styles.iconActionOk]}
-              onPress={() => void reactivateUser(item._id)}
-              activeOpacity={0.85}
-            >
-              <FontAwesome5 name="user-check" size={13} color="#059669" />
-            </TouchableOpacity>
-          )}
         </View>
       </View>
     );
@@ -629,7 +524,7 @@ export default function AdminPage() {
       <View style={styles.pageHeader}>
         <View style={styles.pageHeaderText}>
           <Text style={[styles.title, isMobile && styles.titleMobile]}>Catálogo de usuarios</Text>
-          <Text style={styles.subtitle}>Personal para asignar a viajes. Desactivar no borra el registro.</Text>
+          <Text style={styles.subtitle}>Personal para asignar a viajes. El estado se cambia al editar.</Text>
         </View>
         {!listLoading && !loadError && !isMobile && (
           <View style={styles.countBadge}>
@@ -694,7 +589,6 @@ export default function AdminPage() {
         </Modal>
       )}
 
-      {renderDeleteConfirmModal()}
     </View>
   );
 }

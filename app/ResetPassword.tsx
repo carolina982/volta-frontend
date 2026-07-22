@@ -1,10 +1,11 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  TextInput as RNTextInput,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,28 +16,95 @@ import {
 import { TextInput } from "react-native-paper";
 import { api } from "../services/api";
 
+const CODE_LENGTH = 6;
+
 export default function ResetPassword() {
   const { email } = useLocalSearchParams<{ email: string }>();
-  const [token, setToken] = useState("");
+  const [digits, setDigits] = useState<string[]>(Array(CODE_LENGTH).fill(""));
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [resending, setResending] = useState(false);
 
   const [tokenError, setTokenError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [confirmError, setConfirmError] = useState("");
   const [generalError, setGeneralError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
 
+  const inputRefs = useRef<(RNTextInput | null)[]>([]);
   const { width } = useWindowDimensions();
   const [isMounted, setIsMounted] = useState(false);
   const isLargeScreen = isMounted && width >= 768;
   const emailStr = String(email || "").trim().toLowerCase();
+  const code = digits.join("");
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  const updateDigit = (index: number, raw: string) => {
+    setTokenError("");
+    setGeneralError("");
+
+    
+    const cleaned = raw.replace(/\D/g, "");
+    if (cleaned.length > 1) {
+      const next = Array(CODE_LENGTH).fill("");
+      cleaned
+        .slice(0, CODE_LENGTH)
+        .split("")
+        .forEach((ch, i) => {
+          next[i] = ch;
+        });
+      setDigits(next);
+      const focusAt = Math.min(cleaned.length, CODE_LENGTH - 1);
+      inputRefs.current[focusAt]?.focus();
+      return;
+    }
+
+    const ch = cleaned.slice(-1);
+    setDigits((prev) => {
+      const next = [...prev];
+      next[index] = ch;
+      return next;
+    });
+    if (ch && index < CODE_LENGTH - 1) {
+      inputRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const onKeyPress = (index: number, key: string) => {
+    if (key === "Backspace" && !digits[index] && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+      setDigits((prev) => {
+        const next = [...prev];
+        next[index - 1] = "";
+        return next;
+      });
+    }
+  };
+
+  const handleResend = async () => {
+    if (!emailStr || resending) return;
+    setResending(true);
+    setGeneralError("");
+    setInfoMsg("");
+    try {
+      await api.post("/auth/forgot-password", { email: emailStr });
+      setDigits(Array(CODE_LENGTH).fill(""));
+      setInfoMsg("Te enviamos un código nuevo. Revisa tu correo.");
+      inputRefs.current[0]?.focus();
+    } catch (error: any) {
+      setGeneralError(
+        error?.response?.data?.message || "No se pudo reenviar el código."
+      );
+    } finally {
+      setResending(false);
+    }
+  };
 
   const handleReset = async () => {
     setTokenError("");
@@ -44,16 +112,17 @@ export default function ResetPassword() {
     setConfirmError("");
     setGeneralError("");
     setSuccessMsg("");
+    setInfoMsg("");
 
     if (!emailStr) {
-      setGeneralError("El correo electrónico de recuperación no es válido.");
+      setGeneralError("El correo de recuperación no es válido. Vuelve a solicitar el código.");
       return;
     }
 
     let hasError = false;
 
-    if (!token.trim()) {
-      setTokenError("El código de recuperación es requerido.");
+    if (code.length !== CODE_LENGTH) {
+      setTokenError("Ingresa el código de 6 dígitos.");
       hasError = true;
     }
 
@@ -66,7 +135,7 @@ export default function ResetPassword() {
     }
 
     if (!confirm) {
-      setConfirmError("Por favor confirma la contraseña.");
+      setConfirmError("Confirma la contraseña.");
       hasError = true;
     } else if (password !== confirm) {
       setConfirmError("Las contraseñas no coinciden.");
@@ -79,7 +148,7 @@ export default function ResetPassword() {
     try {
       await api.post("/auth/reset-password", {
         email: emailStr,
-        token: token.trim(),
+        token: code,
         newPassword: password,
       });
 
@@ -112,80 +181,118 @@ export default function ResetPassword() {
 
             <View style={styles.brandRow}>
               <View style={styles.logoBadge}>
-                <FontAwesome5 name="lock" size={isLargeScreen ? 26 : 22} color="#ffffff" />
+                <FontAwesome5 name="shield-alt" size={isLargeScreen ? 24 : 20} color="#ffffff" />
               </View>
-              <Text style={styles.title}>Nueva contraseña</Text>
+              <Text style={styles.title}>Verifica tu código</Text>
               <Text style={styles.description}>
-                {emailStr
-                  ? `Enviamos un código a ${emailStr}. Introdúcelo junto con tu nueva contraseña.`
-                  : "Introduce el código de recuperación y tu nueva contraseña."}
+                Escribe el código de 6 dígitos que enviamos a tu correo y define tu nueva contraseña.
               </Text>
             </View>
 
-            <TextInput
-              placeholder="Código de verificación"
-              placeholderTextColor="#9ca3af"
-              value={token}
-              onChangeText={(text) => {
-                setToken(text);
-                setTokenError("");
-              }}
-              keyboardType="number-pad"
-              autoCapitalize="none"
-              mode="flat"
-              underlineColor={tokenError ? "#dc2626" : "#d1d5db"}
-              activeUnderlineColor={tokenError ? "#dc2626" : "#111111"}
-              dense
-              contentStyle={styles.inputContent}
-              style={styles.input}
-            />
-            {tokenError ? <Text style={styles.errorText}>{tokenError}</Text> : null}
+            {emailStr ? (
+              <View style={styles.emailChip}>
+                <FontAwesome5 name="envelope" size={12} color="#6b7280" />
+                <Text style={styles.emailChipText} numberOfLines={1}>
+                  {emailStr}
+                </Text>
+              </View>
+            ) : null}
 
-            <TextInput
-              placeholder="Contraseña nueva"
-              placeholderTextColor="#9ca3af"
-              value={password}
-              onChangeText={(text) => {
-                setPassword(text);
-                setPasswordError("");
-              }}
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              mode="flat"
-              underlineColor={passwordError ? "#dc2626" : "#d1d5db"}
-              activeUnderlineColor={passwordError ? "#dc2626" : "#111111"}
-              dense
-              contentStyle={styles.inputContent}
-              style={styles.input}
-              right={
-                <TextInput.Icon
-                  icon={showPassword ? "eye-off" : "eye"}
-                  color="#111111"
-                  onPress={() => setShowPassword((v) => !v)}
-                />
-              }
-            />
-            {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Código de verificación</Text>
+              <View style={styles.codeRow}>
+                {digits.map((digit, index) => (
+                  <View
+                    key={`code-${index}`}
+                    style={[
+                      styles.codeCell,
+                      digit ? styles.codeCellFilled : null,
+                      tokenError ? styles.codeCellError : null,
+                    ]}
+                  >
+                    <RNTextInput
+                      ref={(ref) => {
+                        inputRefs.current[index] = ref;
+                      }}
+                      value={digit}
+                      onChangeText={(text) => updateDigit(index, text)}
+                      onKeyPress={({ nativeEvent }) => onKeyPress(index, nativeEvent.key)}
+                      keyboardType="number-pad"
+                      maxLength={index === 0 ? CODE_LENGTH : 1}
+                      selectTextOnFocus
+                      style={styles.codeBox}
+                      textAlign="center"
+                      autoComplete="one-time-code"
+                      textContentType="oneTimeCode"
+                      underlineColorAndroid="transparent"
+                    />
+                  </View>
+                ))}
+              </View>
+              {tokenError ? <Text style={styles.errorText}>{tokenError}</Text> : null}
+              <TouchableOpacity
+                onPress={() => void handleResend()}
+                disabled={resending || !emailStr}
+                style={styles.resendBtn}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.resendText}>
+                  {resending ? "Reenviando…" : "Reenviar código"}
+                </Text>
+              </TouchableOpacity>
+            </View>
 
-            <TextInput
-              placeholder="Confirmar contraseña"
-              placeholderTextColor="#9ca3af"
-              value={confirm}
-              onChangeText={(text) => {
-                setConfirm(text);
-                setConfirmError("");
-              }}
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              mode="flat"
-              underlineColor={confirmError ? "#dc2626" : "#d1d5db"}
-              activeUnderlineColor={confirmError ? "#dc2626" : "#111111"}
-              dense
-              contentStyle={styles.inputContent}
-              style={styles.input}
-            />
-            {confirmError ? <Text style={styles.errorText}>{confirmError}</Text> : null}
+            <View style={styles.divider} />
 
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Nueva contraseña</Text>
+              <TextInput
+                placeholder="Contraseña nueva"
+                placeholderTextColor="#9ca3af"
+                value={password}
+                onChangeText={(text) => {
+                  setPassword(text);
+                  setPasswordError("");
+                }}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                mode="flat"
+                underlineColor={passwordError ? "#dc2626" : "#d1d5db"}
+                activeUnderlineColor={passwordError ? "#dc2626" : "#111111"}
+                dense
+                contentStyle={styles.inputContent}
+                style={styles.input}
+                right={
+                  <TextInput.Icon
+                    icon={showPassword ? "eye-off" : "eye"}
+                    color="#111111"
+                    onPress={() => setShowPassword((v) => !v)}
+                  />
+                }
+              />
+              {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
+
+              <TextInput
+                placeholder="Confirmar contraseña"
+                placeholderTextColor="#9ca3af"
+                value={confirm}
+                onChangeText={(text) => {
+                  setConfirm(text);
+                  setConfirmError("");
+                }}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                mode="flat"
+                underlineColor={confirmError ? "#dc2626" : "#d1d5db"}
+                activeUnderlineColor={confirmError ? "#dc2626" : "#111111"}
+                dense
+                contentStyle={styles.inputContent}
+                style={styles.input}
+              />
+              {confirmError ? <Text style={styles.errorText}>{confirmError}</Text> : null}
+            </View>
+
+            {infoMsg ? <Text style={styles.infoText}>{infoMsg}</Text> : null}
             {generalError ? <Text style={styles.generalErrorText}>{generalError}</Text> : null}
             {successMsg ? <Text style={styles.successText}>{successMsg}</Text> : null}
 
@@ -202,7 +309,7 @@ export default function ResetPassword() {
               onPress={() => router.push("/ForgotPassword")}
               style={styles.backLink}
             >
-              <Text style={styles.linkText}>← Volver a solicitar código</Text>
+              <Text style={styles.linkText}>← Cambiar correo</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => router.push("/Login")} style={styles.backLinkSecondary}>
               <Text style={styles.linkTextMuted}>Ir al inicio de sesión</Text>
@@ -242,27 +349,26 @@ const styles = StyleSheet.create({
   },
   card: {
     width: "100%",
-    maxWidth: 420,
+    maxWidth: 440,
     alignSelf: "center",
     backgroundColor: "#ffffff",
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: "#e5e7eb",
     paddingHorizontal: 20,
     paddingVertical: 28,
     position: "relative",
-    ...(Platform.OS === "web" ? { boxShadow: "0 12px 40px rgba(0,0,0,0.08)" as any } : {}),
+    ...(Platform.OS === "web" ? { boxShadow: "0 16px 48px rgba(0,0,0,0.08)" as any } : {}),
   },
   cardDesktop: {
     paddingHorizontal: 36,
     paddingVertical: 40,
-    maxWidth: 440,
   },
-  brandRow: { alignItems: "center", marginBottom: 20 },
+  brandRow: { alignItems: "center", marginBottom: 16 },
   logoBadge: {
     width: 56,
     height: 56,
-    borderRadius: 28,
+    borderRadius: 18,
     backgroundColor: "#111111",
     justifyContent: "center",
     alignItems: "center",
@@ -273,7 +379,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#111111",
     textAlign: "center",
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
   description: {
     fontSize: 14,
@@ -283,9 +389,121 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     paddingHorizontal: 4,
   },
-  input: { width: "100%", height: 48, backgroundColor: "transparent", marginTop: 8 },
+  emailChip: {
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#f3f4f6",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginBottom: 18,
+    maxWidth: "100%",
+  },
+  emailChipText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#374151",
+    flexShrink: 1,
+  },
+  section: { width: "100%", marginBottom: 4 },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#111111",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    marginBottom: 10,
+  },
+  codeRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    width: "100%",
+  },
+  codeCell: {
+    flex: 1,
+    minWidth: 40,
+    maxWidth: 52,
+    height: 54,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#fafafa",
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "hidden",
+  },
+  codeCellFilled: {
+    borderColor: "#111111",
+    backgroundColor: "#ffffff",
+  },
+  codeCellError: {
+    borderColor: "#dc2626",
+  },
+  codeBox: {
+    width: "100%",
+    height: "100%",
+    margin: 0,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#111111",
+    textAlign: "center",
+    ...(Platform.OS === "android"
+      ? {
+          textAlignVertical: "center" as const,
+          includeFontPadding: false,
+          // Evita que el texto baje dentro de la caja
+          lineHeight: 24,
+        }
+      : Platform.OS === "ios"
+        ? {
+            // En iOS un lineHeight ≈ altura de la caja empuja el dígito hacia abajo
+            lineHeight: 24,
+          }
+        : ({
+            outlineStyle: "none",
+            outlineWidth: 0,
+            textAlign: "center",
+            lineHeight: 50,
+            display: "block",
+            boxSizing: "border-box",
+            paddingLeft: 0,
+            paddingRight: 0,
+          } as any)),
+  },
+  resendBtn: {
+    alignSelf: "center",
+    marginTop: 12,
+    paddingVertical: 6,
+  },
+  resendText: {
+    color: "#111111",
+    fontSize: 13,
+    fontWeight: "700",
+    textDecorationLine: "underline",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#f3f4f6",
+    marginVertical: 18,
+  },
+  input: { width: "100%", height: 48, backgroundColor: "transparent", marginTop: 4 },
   inputContent: { color: "#111111", fontWeight: "600" },
-  errorText: { width: "100%", color: "#dc2626", fontSize: 12, marginTop: 4 },
+  errorText: { width: "100%", color: "#dc2626", fontSize: 12, marginTop: 6 },
+  infoText: {
+    color: "#2563eb",
+    fontSize: 13,
+    fontWeight: "600",
+    marginTop: 10,
+    textAlign: "center",
+  },
   generalErrorText: {
     color: "#dc2626",
     fontSize: 14,
@@ -302,12 +520,12 @@ const styles = StyleSheet.create({
   },
   button: {
     width: "100%",
-    minHeight: 50,
+    minHeight: 52,
     backgroundColor: "#111111",
-    borderRadius: 10,
+    borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
-    marginTop: 16,
+    marginTop: 18,
     paddingVertical: 12,
     ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
   },
@@ -316,14 +534,19 @@ const styles = StyleSheet.create({
   backLink: { marginTop: 18, alignSelf: "center" },
   backLinkSecondary: { marginTop: 10, alignSelf: "center" },
   linkText: { color: "#111111", fontSize: 14, fontWeight: "600", textDecorationLine: "underline" },
-  linkTextMuted: { color: "#6b7280", fontSize: 13, fontWeight: "500", textDecorationLine: "underline" },
+  linkTextMuted: {
+    color: "#6b7280",
+    fontSize: 13,
+    fontWeight: "500",
+    textDecorationLine: "underline",
+  },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0, 0, 0, 0.72)",
     zIndex: 999,
     justifyContent: "center",
     alignItems: "center",
-    borderRadius: 16,
+    borderRadius: 18,
   },
   loadingText: { marginTop: 14, color: "#ffffff", fontWeight: "600", fontSize: 15 },
 });

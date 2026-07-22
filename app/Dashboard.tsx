@@ -384,6 +384,8 @@ export default function Dashboard() {
         return { name: "route" as const, color: "#111111", bg: "#f3f4f6" };
       case "companion_assigned":
         return { name: "user-friends" as const, color: "#111111", bg: "#f3f4f6" };
+      case "trip_started":
+        return { name: "play-circle" as const, color: "#2563eb", bg: "#eff6ff" };
       case "trip_completed":
         return { name: "check-circle" as const, color: "#059669", bg: "#ecfdf5" };
       case "announcement_published":

@@ -90,16 +90,17 @@ export default function ForgotPassword() {
 
             <View style={styles.brandRow}>
               <View style={styles.logoBadge}>
-                <FontAwesome5 name="key" size={isLargeScreen ? 26 : 22} color="#ffffff" />
+                <FontAwesome5 name="envelope-open-text" size={isLargeScreen ? 24 : 20} color="#ffffff" />
               </View>
               <Text style={styles.title}>Recuperar contraseña</Text>
               <Text style={styles.description}>
-                Ingresa tu correo y te enviaremos un código de recuperación.
+                Te enviaremos un código de 6 dígitos a tu correo para verificar que eres tú.
               </Text>
             </View>
 
+            <Text style={styles.sectionLabel}>Correo electrónico</Text>
             <TextInput
-              placeholder="Correo electrónico"
+              placeholder="tu@empresa.com"
               placeholderTextColor="#9ca3af"
               value={email}
               onChangeText={(text) => {
@@ -125,7 +126,7 @@ export default function ForgotPassword() {
               disabled={loading}
               activeOpacity={0.85}
             >
-              <Text style={styles.buttonText}>Enviar código de recuperación</Text>
+              <Text style={styles.buttonText}>Enviar código</Text>
             </TouchableOpacity>
 
             <TouchableOpacity onPress={() => router.push("/Login")} style={styles.backLink}>
@@ -186,7 +187,7 @@ const styles = StyleSheet.create({
   logoBadge: {
     width: 56,
     height: 56,
-    borderRadius: 28,
+    borderRadius: 18,
     backgroundColor: "#111111",
     justifyContent: "center",
     alignItems: "center",
@@ -197,7 +198,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#111111",
     textAlign: "center",
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
   description: {
     fontSize: 14,
@@ -207,7 +208,16 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     paddingHorizontal: 8,
   },
-  input: { width: "100%", height: 48, backgroundColor: "transparent", marginTop: 8 },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#111111",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    marginBottom: 4,
+    alignSelf: "flex-start",
+  },
+  input: { width: "100%", height: 48, backgroundColor: "transparent", marginTop: 4 },
   inputContent: { color: "#111111", fontWeight: "600" },
   errorText: { width: "100%", color: "#dc2626", fontSize: 12, marginTop: 4 },
   generalErrorText: {
@@ -219,9 +229,9 @@ const styles = StyleSheet.create({
   },
   button: {
     width: "100%",
-    minHeight: 50,
+    minHeight: 52,
     backgroundColor: "#111111",
-    borderRadius: 10,
+    borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
     marginTop: 16,
